@@ -1,0 +1,13 @@
+# Provisioned at startup, so the dashboard works on a fresh stack with no
+# clicks. The fixed uid is what the dashboard panels reference.
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 5s

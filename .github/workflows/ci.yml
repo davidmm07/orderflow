@@ -69,6 +69,13 @@ jobs:
       - run: make flows-lint
       - run: make flows
 
+  monitoring:
+    name: Prometheus rules and Grafana dashboard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make monitoring-check
+
   supply-chain:
     name: Advisories, licenses and sources
     runs-on: ubuntu-latest

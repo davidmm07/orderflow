@@ -1,0 +1,58 @@
+# Alert rules for Orderflow. Each rule names the operational question it
+# answers; the runbook in KT_README.MD step 11 says what to do next.
+# Unit tests for these rules live in alerts.test.yml (make monitoring-check).
+groups:
+  - name: orderflow
+    rules:
+      - alert: OrderflowDown
+        expr: up{job="orderflow"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Orderflow has not answered a scrape for a minute.
+          action: Check the process or container and its last log lines.
+
+      - alert: EventsDropped
+        expr: increase(orderflow_events_dropped_total[5m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: Domain events were lost after the publisher gave up retrying.
+          action: Consumers may be missing trades. Find "dropping event batch" in the logs for the sequence range to replay.
+
+      - alert: MatchingLatencyHigh
+        expr: histogram_quantile(0.99, sum by (le, market) (rate(orderflow_engine_latency_seconds_bucket[5m]))) > 0.005
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p99 matching latency on {{ $labels.market }} has been above 5 ms for 5 minutes."
+          action: Check the event sink and the order rate on that market before raising any capacity.
+
+      - alert: LoadShedding
+        expr: sum(rate(orderflow_http_problems_total{code="market_overloaded"}[5m])) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Engine queues are full and orders are being turned away with 503.
+          action: Look for a slow event sink or one market receiving a burst.
+
+      - alert: ServerErrorRateHigh
+        expr: sum(rate(orderflow_http_requests_total{status=~"5.."}[5m])) / sum(rate(orderflow_http_requests_total[5m])) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: More than 1% of requests end in a 5xx response.
+          action: Break the errors down by code in the Problems panel of the dashboard.
+
+      - alert: AuthenticationFailuresHigh
+        expr: sum(rate(orderflow_http_problems_total{code="unauthenticated"}[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: More than one failed signature per second for 5 minutes.
+          action: A client is misconfigured or keys are being guessed. Correlate with request ids in the logs.

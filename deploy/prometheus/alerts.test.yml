@@ -1,0 +1,92 @@
+# promtool unit tests for alerts.yml: run with make monitoring-check.
+rule_files:
+  - alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: service down for more than a minute
+    interval: 1m
+    input_series:
+      - series: 'up{job="orderflow", instance="orderflow:8080"}'
+        values: "1 1 0 0 0"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: OrderflowDown
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: OrderflowDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: orderflow
+              instance: orderflow:8080
+            exp_annotations:
+              summary: Orderflow has not answered a scrape for a minute.
+              action: Check the process or container and its last log lines.
+
+  - name: dropped events fire at once
+    interval: 1m
+    input_series:
+      - series: 'orderflow_events_dropped_total{job="orderflow", instance="orderflow:8080"}'
+        values: "0 0 3 3 3"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: EventsDropped
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: EventsDropped
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: orderflow
+              instance: orderflow:8080
+            exp_annotations:
+              summary: Domain events were lost after the publisher gave up retrying.
+              action: Consumers may be missing trades. Find "dropping event batch" in the logs for the sequence range to replay.
+
+  - name: slow matching only alerts on the slow market
+    interval: 1m
+    input_series:
+      # BTC-USD: every order finishes within 1 ms.
+      - series: 'orderflow_engine_latency_seconds_bucket{market="BTC-USD", le="0.001"}'
+        values: "0+100x15"
+      - series: 'orderflow_engine_latency_seconds_bucket{market="BTC-USD", le="0.01"}'
+        values: "0+100x15"
+      - series: 'orderflow_engine_latency_seconds_bucket{market="BTC-USD", le="+Inf"}'
+        values: "0+100x15"
+      # ETH-USD: every order takes between 5 and 10 ms.
+      - series: 'orderflow_engine_latency_seconds_bucket{market="ETH-USD", le="0.001"}'
+        values: "0x15"
+      - series: 'orderflow_engine_latency_seconds_bucket{market="ETH-USD", le="0.01"}'
+        values: "0+100x15"
+      - series: 'orderflow_engine_latency_seconds_bucket{market="ETH-USD", le="+Inf"}'
+        values: "0+100x15"
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: MatchingLatencyHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              market: ETH-USD
+            exp_annotations:
+              summary: "p99 matching latency on ETH-USD has been above 5 ms for 5 minutes."
+              action: Check the event sink and the order rate on that market before raising any capacity.
+
+  - name: load shedding needs two minutes of 503s
+    interval: 1m
+    input_series:
+      - series: 'orderflow_http_problems_total{route="/v1/markets/{market}/orders", code="market_overloaded"}'
+        values: "0 0 5 10 15 20 25 30"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: LoadShedding
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: LoadShedding
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: Engine queues are full and orders are being turned away with 503.
+              action: Look for a slow event sink or one market receiving a burst.

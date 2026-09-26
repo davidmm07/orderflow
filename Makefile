@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help env run test lint fmt bench ci up down consume postman-env flows flows-lint
+.PHONY: help env run test lint fmt bench ci up down consume postman-env flows flows-lint monitoring-check
 
 help: ## List the available targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -25,8 +25,9 @@ bench: ## Benchmark the matching engine
 
 ci: lint test ## Everything CI runs, locally
 
-up: ## Build and start Orderflow with Redpanda
+up: ## Build and start Orderflow with Redpanda, Prometheus and Grafana
 	docker compose up --build -d
+	@echo "API http://127.0.0.1:8080  Prometheus http://127.0.0.1:9090  Grafana http://127.0.0.1:3000"
 
 down: ## Stop the stack and remove its volumes
 	docker compose down -v
@@ -46,3 +47,11 @@ flows: ## Run the scenario flows with the Postman CLI; FLOW="06 Stop orders" run
 
 flows-lint: ## Validate the scenario flows against the Postman collection schema
 	$(POSTMAN_CLI) collection lint $(FLOWS)
+
+PROMTOOL := docker run --rm -w /etc/prometheus -v "$(CURDIR)/deploy/prometheus:/etc/prometheus:ro" \
+	--entrypoint promtool prom/prometheus:v3.15.0
+
+monitoring-check: ## Validate the Prometheus config, unit test the alert rules, check the dashboard JSON
+	$(PROMTOOL) check config prometheus.yml
+	$(PROMTOOL) test rules alerts.test.yml
+	python3 -m json.tool deploy/grafana/dashboards/orderflow.json > /dev/null

@@ -8,3 +8,5 @@ target/
 *.key
 secrets/
 docs/
+deploy/
+postman/
