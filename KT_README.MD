@@ -387,6 +387,14 @@ existing `Harness` helper.
 cargo test -p orderflow-domain engine
 ```
 
+Changes to the engine can change its speed. Measure the matching hot path
+before and after with Criterion (release build, a few minutes); the
+README lists reference numbers:
+
+```bash
+make bench
+```
+
 > Checkpoint: your new test passes, and you can explain why a trade uses
 > the maker's price.
 
@@ -439,8 +447,61 @@ Things to check in each record:
 - The `event_type`, `schema_version` and `content-type` headers let
   consumers route records without parsing the body.
 
-Run `make topics` to see the six partitions. All events of one market
-land on the same partition, which is what keeps each market in order.
+### Inspect the topic with `make topics`
+
+`make topics` describes the topic: its partitions, and how many records
+each one holds. It only reads, so it is safe to run at any time while the
+stack is up.
+
+```bash
+make topics
+```
+
+Example output after a few scenario flows:
+
+```
+PARTITION  LEADER  EPOCH  REPLICAS  LOG-START-OFFSET  HIGH-WATERMARK
+0          0       1      [0]       0                 0
+1          0       1      [0]       0                 0
+2          0       1      [0]       0                 2
+3          0       1      [0]       0                 5
+4          0       1      [0]       0                 8
+5          0       1      [0]       0                 32
+```
+
+| Column | Meaning |
+|---|---|
+| `PARTITION` | The partition number; the topic is created with six |
+| `LEADER`, `REPLICAS` | The broker that owns the partition; a single broker (`0`) locally |
+| `EPOCH` | The broker's leadership epoch for that partition, unrelated to the event `epoch` field |
+| `LOG-START-OFFSET` | Offset of the oldest record still stored |
+| `HIGH-WATERMARK` | Offset the next record will get; with nothing deleted yet, the number of records in the partition |
+
+To see which markets land on which partition, read the keys of the
+records already stored (it stops after 200 records):
+
+```bash
+docker compose exec redpanda rpk topic consume orderflow.events.v1 --offset start --num 200 --format '%p %k\n' | sort -u
+```
+
+```
+2 BTC-USD
+3 ETH-USD
+4 AVAX-USD
+5 LINK-USD
+5 LTC-USD
+5 SOL-USD
+```
+
+Every market appears on exactly one partition, because records are keyed
+by market id. That is what keeps each market's events in order. Several
+markets can share a partition, and some partitions can stay empty; with 16
+markets and 6 partitions both are normal. If a market ever showed up on
+two partitions, its events could be read out of order, and that would be a
+bug to report.
+
+Use `make consume` to watch new records arrive, and `make topics` to
+check where they went and how many there are.
 
 A consumer keeps the last `(epoch, sequence)` it applied for each market
 and processes each record in this order:
@@ -645,6 +706,8 @@ Code rules:
 - Comments explain why the code does something, in plain sentences. When
   a type implements a design pattern or a SOLID principle, name it in the
   doc comment the way the existing code does.
+- Format with `make fmt` before committing. `make lint` runs the same
+  format check and clippy as CI's lint job, and `make ci` adds the tests.
 
 Pull request checklist:
 
@@ -656,6 +719,36 @@ Pull request checklist:
 - [ ] Commits follow the convention above.
 
 ---
+
+## Command reference
+
+`make help` prints this list. The step that introduces each command explains
+it in context.
+
+| Command | What it does | Introduced in |
+|---|---|---|
+| `make env` | Creates `.env` with two traders and fresh API secrets | Step 3 |
+| `make run` | Runs the server locally with the log event sink | Step 3 |
+| `make test` | Runs every test in the workspace | Step 2 |
+| `make lint` | Checks formatting and runs clippy with warnings as errors | Step 13 |
+| `make fmt` | Formats the code | Step 13 |
+| `make ci` | Runs lint and tests, the same checks as the CI pipeline | Step 2 |
+| `make bench` | Benchmarks the matching engine | Step 7 |
+| `make postman-env` | Writes the `Orderflow local` Postman environment from `.env` | Step 4 |
+| `make flows` | Runs the Postman scenario flows; `FLOW="06 Stop orders"` runs one | Step 4 |
+| `make flows-lint` | Validates the flows against the Postman collection schema | Step 4 |
+| `make up` | Builds and starts the service with Redpanda, Prometheus and Grafana | Step 8 |
+| `make consume` | Prints events from the topic as they arrive | Step 8 |
+| `make topics` | Shows the topic's partitions and how many records each holds | Step 8 |
+| `make down` | Stops the stack and removes its volumes | Step 8 |
+| `make monitoring-check` | Validates the Prometheus config, tests the alert rules, checks the dashboard | Step 11 |
+
+Scripts outside the Makefile:
+
+| Script | What it does | Introduced in |
+|---|---|---|
+| `scripts/bootstrap-env.sh --add-trader` | Appends one more trader to an existing `.env` | Step 4 |
+| `scripts/signed-request.sh METHOD PATH [BODY]` | Sends one signed request; `ORDERFLOW_CREDENTIAL=2` signs as trader B | Step 3 |
 
 ## Glossary
 
@@ -696,7 +789,7 @@ Pull request checklist:
 - [ ] Step 5: ADR 0001 read, `Clock` exercise done
 - [ ] Step 6: one order traced through all 13 rows
 - [ ] Step 7: engine test written
-- [ ] Step 8: events consumed from Kafka
+- [ ] Step 8: events consumed with `make consume`, partitions checked with `make topics`
 - [ ] Step 9: security model explained to your onboarding buddy
 - [ ] Step 10: validation and error layers understood
 - [ ] Step 11: dashboard explored, an alert watched firing, runbook reviewed
