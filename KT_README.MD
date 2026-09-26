@@ -394,6 +394,17 @@ cargo test -p orderflow-domain engine
 
 ## Step 8. Events and Kafka
 
+Every state change in a market is published as an event, and the rest of
+an exchange (ledger, market data, risk, notifications, audit) is built by
+reading that stream. The README section "Event streaming" lists those
+consumers and what each one does with the events.
+
+Locally the broker is Redpanda: a Kafka-compatible streaming platform that
+runs as one container. The service talks plain Kafka through librdkafka
+and has no Redpanda-specific code, so production can use any
+Kafka-compatible cluster. [ADR 0005](docs/adr/0005-redpanda-as-local-kafka.md)
+explains the choice.
+
 Read [ADR 0003](docs/adr/0003-event-delivery-and-durability.md). Stop the
 server from step 3, because the stack uses the same port 8080, and start
 Redpanda (Kafka compatible) with the production image. Compose reads your
@@ -424,6 +435,15 @@ Things to check in each record:
   new version.
 - The `event_type`, `schema_version` and `content-type` headers let
   consumers route records without parsing the body.
+
+Run `make topics` to see the six partitions. All events of one market
+land on the same partition, which is what keeps each market in order.
+
+A consumer processes each record in this order: parse it; skip it if its
+sequence is not above the last one applied for that market (a duplicate);
+stop and alert if it jumps by more than one (a gap); apply it; then commit
+the offset. Committing after applying is what makes the consumer safe to
+crash and restart.
 
 ```bash
 make down

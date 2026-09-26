@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help env run test lint fmt bench ci up down consume postman-env flows flows-lint monitoring-check
+.PHONY: help env run test lint fmt bench ci up down consume topics postman-env flows flows-lint monitoring-check
 
 help: ## List the available targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -34,6 +34,9 @@ down: ## Stop the stack and remove its volumes
 
 consume: ## Print events from the topic as they arrive
 	docker compose exec redpanda rpk topic consume orderflow.events.v1 --format '%k %v\n'
+
+topics: ## Show the event topic's partitions and how many records each holds
+	docker compose exec redpanda rpk topic describe orderflow.events.v1 --print-partitions
 
 postman-env: ## Write the "Orderflow local" Postman environment from .env (git-ignored, holds secrets)
 	./scripts/postman-env.sh

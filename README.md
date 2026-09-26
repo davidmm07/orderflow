@@ -389,6 +389,78 @@ Matching benchmark (`make bench`, Criterion, release build, AMD Ryzen 7
 | Rest a non-crossing limit order on a 200 order book | about 1.2 us |
 | Sweep 10 price levels (40 fills) with one order | about 19 us |
 
+## Event streaming: Kafka, with Redpanda locally
+
+The matching engine only matches. Everything that happens after a trade,
+such as moving balances, publishing prices or checking risk, is done by
+other services that read the event stream at their own pace. The engine
+never waits for them, and adding a new one needs no change here.
+
+Every state change in a market becomes one event on the topic
+`orderflow.events.v1`:
+
+| Event type | When |
+|---|---|
+| `order_accepted` | An order passed validation (stop orders arrive as `pending`) |
+| `trade_executed` | Two orders matched |
+| `order_cancelled` | An order was cancelled, by its owner or by a rule (IOC, FOK, self-trade prevention, no liquidity) |
+| `stop_triggered` | A stop order reached its stop price and is about to be matched |
+
+Who reads the stream in a real exchange, each as its own consumer group:
+
+| Consumer | Uses the events to |
+|---|---|
+| Ledger and settlement | Move funds between buyer and seller on every `trade_executed` |
+| Market data | Publish the trade tape, candles and live feeds to clients |
+| Risk and surveillance | Track exposure per account and detect wash trading or spoofing |
+| Notifications | Tell each account about its fills and cancels |
+| Audit and analytics | Keep the full ordered history of every market; report volumes and fees |
+
+A slow or crashed consumer does not slow matching: it resumes from its
+last committed offset. Records are keyed by market, so every market stays
+ordered on one partition; delivery is at least once, and `event_id`
+(`{market}:{sequence}`) lets consumers drop duplicates and spot gaps
+([ADR 0003](docs/adr/0003-event-delivery-and-durability.md)).
+
+A record as it appears on the topic (`data` fields shortened):
+
+```json
+{"schema_version": 1, "event_id": "BTC-USD:5", "market": "BTC-USD", "sequence": 5,
+ "occurred_at_ns": 1790462352161804702, "event_type": "trade_executed",
+ "data": {"trade_id": 1, "price": "64000.25", "quantity": "0.002", "taker_side": "sell", "...": "..."}}
+```
+
+### What Redpanda is doing here
+
+Redpanda is a streaming platform that speaks the Kafka protocol. In the
+compose stack it stands in for a Kafka cluster: one container, no JVM and
+no separate controllers, ready in seconds. The service uses the standard
+Kafka client and contains no Redpanda-specific code, so in production
+`ORDERFLOW_KAFKA_BROKERS` points at whatever Kafka-compatible cluster is
+run there (Apache Kafka, Confluent, Amazon MSK or Redpanda). The reasoning
+is in [ADR 0005](docs/adr/0005-redpanda-as-local-kafka.md).
+
+`make run` does not need a broker: it uses the log sink and prints events
+to the log. Kafka is used by the container image (built with
+`--features kafka`) that `make up` starts:
+
+```bash
+make up
+```
+
+```bash
+make consume
+```
+
+```bash
+make topics
+```
+
+`make consume` prints each record as it arrives, and `make topics` shows
+the six partitions with the number of records in each. From the host,
+Kafka clients connect to `127.0.0.1:19092`; inside the compose network the
+address is `redpanda:9092`.
+
 ## Observability and monitoring
 
 - Logs are JSON lines in production (`ORDERFLOW_LOG_FORMAT=json`). Each
@@ -575,6 +647,11 @@ Commits follow [Conventional Commits](https://www.conventionalcommits.org):
   and the tick size needed for the conversion is already known per market.
 - Replay protection relies on the timestamp window. A short-lived nonce
   cache would close the remaining 30 seconds.
+- Sequence numbers restart at 1 when the process restarts, because state
+  lives in memory. A consumer that de-duplicates on `(market, sequence)`
+  would drop the first events after a restart as duplicates. The journal
+  from ADR 0003 removes this; until then, a per-process epoch in each event
+  would let consumers tell the runs apart.
 
 ## License
 
