@@ -23,6 +23,18 @@ scripts:
       // A request is private when it has an x-orderflow-key header. Tests of the
       // auth failures preset x-orderflow-timestamp or x-orderflow-signature, and
       // this script keeps whatever they preset.
+      //
+      // The HMAC uses the Web Crypto API built into the Postman sandbox; the
+      // older CryptoJS global is deprecated. Postman waits for the awaits
+      // below before it sends the request.
+      async function hmacSha256Hex(secret, message) {
+          const encoder = new TextEncoder();
+          const key = await crypto.subtle.importKey(
+              'raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+          const mac = await crypto.subtle.sign('HMAC', key, encoder.encode(message));
+          return Array.from(new Uint8Array(mac), (byte) => byte.toString(16).padStart(2, '0')).join('');
+      }
+
       const keyHeader = pm.request.headers.get('x-orderflow-key');
       if (keyHeader) {
           const required = ['trader_a_key', 'trader_a_secret', 'trader_b_key', 'trader_b_secret'];
@@ -43,8 +55,11 @@ scripts:
           const timestamp = preset ? pm.variables.replaceIn(preset) : String(Math.floor(Date.now() / 1000));
           const path = pm.variables.replaceIn(pm.request.url.getPathWithQuery());
           const body = pm.request.body && pm.request.body.raw ? pm.variables.replaceIn(pm.request.body.raw) : '';
-          const signature = CryptoJS.HmacSHA256(timestamp + pm.request.method + path + body, secret)
-              .toString(CryptoJS.enc.Hex);
+          // Web Crypto rejects empty keys, so an unknown key gets an all-zero
+          // signature, which the server refuses like any other bad one.
+          const signature = secret
+              ? await hmacSha256Hex(secret, timestamp + pm.request.method + path + body)
+              : '00'.repeat(32);
           pm.request.headers.upsert({ key: 'x-orderflow-timestamp', value: timestamp });
           if (!pm.request.headers.get('x-orderflow-signature')) {
               pm.request.headers.upsert({ key: 'x-orderflow-signature', value: signature });
