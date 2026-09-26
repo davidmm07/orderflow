@@ -45,7 +45,7 @@ Keep three design rules in mind while you read the code:
 | Rust | 1.98.1, pinned in `rust-toolchain.toml` | Build and tests |
 | C toolchain (`gcc`, `make`) | any | Only for `--features kafka`, which compiles librdkafka from source |
 | openssl, curl | any | `make env` and the request helper script |
-| Docker with Compose v2 | any recent | Only for the Kafka stack in step 8 |
+| Docker with Compose v2 | any recent | Only for the Kafka, Prometheus and Grafana stack (steps 8 and 11) |
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -487,30 +487,72 @@ Logs are JSON in production. Every line of a request includes its
 `request_id`, which the client also receives as `x-request-id`. When a user
 reports a problem, ask for that header first.
 
-Metrics are served at `/metrics`:
+Metrics are served at `/metrics`, from the matching engine
+(`orderflow_orders_total`, `orderflow_trades_total`,
+`orderflow_engine_latency_seconds`, `orderflow_events_*`) and from the
+HTTP layer (`orderflow_http_requests_total`,
+`orderflow_http_request_duration_seconds`, `orderflow_http_problems_total`):
 
 ```bash
 curl -s localhost:8080/metrics | grep '^orderflow_'
 ```
+
+`make up` also starts Prometheus and Grafana. Try this once to see the
+whole loop:
+
+1. Start the stack and generate traffic with the scenario flows:
+
+   ```bash
+   make up
+   ```
+
+   ```bash
+   make flows
+   ```
+
+2. Open http://127.0.0.1:3000/d/orderflow. The dashboard refreshes every 5
+   seconds; the market filter at the top narrows the engine panels.
+3. Open http://127.0.0.1:9090/alerts and see six rules, all inactive.
+4. Stop the service with `docker compose stop orderflow`. After about a
+   minute `OrderflowDown` goes from pending to firing, and the dashboard's
+   "Firing alerts" stat turns red. Start it again with
+   `docker compose start orderflow` and the alert resolves.
+
+Alert rules, scrape config and the dashboard are code under `deploy/`.
+After changing any of them, run the checks CI runs:
+
+```bash
+make monitoring-check
+```
+
+To change the dashboard, edit `deploy/grafana/dashboards/orderflow.json`
+(Grafana reloads it within 10 seconds); edits made in the Grafana UI are
+not saved.
 
 Shutdown sequence on SIGTERM: HTTP stops accepting connections, in-flight
 requests finish, each market engine drains its queue, the outbox closes,
 the dispatcher flushes, and the process exits.
 `ORDERFLOW_SHUTDOWN_GRACE_SECS` sets the upper bound.
 
-Runbook:
+Runbook. The first column matches the alert names in
+`deploy/prometheus/alerts.yml` where one exists:
 
 | Symptom | Likely cause | First action |
 |---|---|---|
-| `503 market_overloaded` rising | A market's engine queue is full | Check `orderflow_engine_latency_seconds` for that market and the event sink; raise `ORDERFLOW_ENGINE_QUEUE_CAPACITY` only once the cause is known |
-| `orderflow_events_dropped_total` above 0 | The sink kept failing after all retries | Check broker health and look for "dropping event batch" in the logs; the line includes the first and last sequence to replay |
+| Alert `OrderflowDown` | The process or container is gone, or `/metrics` is unreachable | Check the container state and its last log lines |
+| Alert `MatchingLatencyHigh` | A market is busy, or the event sink is slow and backpressure reaches the engine | Compare "Event pipeline" and "Trades by market" on the dashboard before adding capacity |
+| Alert `ServerErrorRateHigh` | Timeouts, overload or a bug | Read "Problems by code" on the dashboard; `internal_error` means a bug, look up its request ids in the logs |
+| Alert `AuthenticationFailuresHigh` | A client with a broken clock or secret, or someone guessing keys | Find the key id in the logs by request id and contact its owner |
+| Alert `LoadShedding`, or `503 market_overloaded` rising | A market's engine queue is full | Check `orderflow_engine_latency_seconds` for that market and the event sink; raise `ORDERFLOW_ENGINE_QUEUE_CAPACITY` only once the cause is known |
+| Alert `EventsDropped` | The sink kept failing after all retries | Check broker health and look for "dropping event batch" in the logs; the line includes the first and last sequence to replay |
 | Many `401` for one client | Clock skew, wrong secret, or signing the wrong path | Compare the client's timestamp with server time; confirm they sign `path_and_query` exactly as sent |
 | `429` for one account | Token bucket exhausted | Expected under abuse; otherwise review `ORDERFLOW_RATE_LIMIT_*` |
 | `/health/ready` returns 503 | A market actor stopped | Look for "market engine stopped" in logs outside a shutdown |
 | Process exits at startup | Invalid configuration | Read the first lines of output, which list every problem |
 
-> Checkpoint: you can find the latency histogram for `BTC-USD` in the
-> metrics output and describe each shutdown stage.
+> Checkpoint: you can find the p99 matching latency for `BTC-USD` on the
+> dashboard, you have watched `OrderflowDown` fire and resolve, and you can
+> describe each shutdown stage.
 
 ---
 
@@ -612,6 +654,7 @@ Pull request checklist:
 | Add an event sink | Implement `EventPublisher` in the infrastructure crate and select it in `crates/server/src/app.rs` |
 | Replace in-memory storage | Implement `OrderRepository` and `IdempotencyStore` and wire them in `app.rs`; nothing else changes |
 | Tune capacity | Env variables listed in `.env.example` |
+| Add a metric, alert or panel | Metric in `crates/infrastructure/src/metrics.rs` or `crates/api/src/http_metrics.rs`; alert and its test in `deploy/prometheus/`; panel in `deploy/grafana/dashboards/orderflow.json`; then `make monitoring-check` |
 | Understand a past decision | `docs/adr/` |
 
 ## Onboarding checklist
@@ -626,6 +669,6 @@ Pull request checklist:
 - [ ] Step 8: events consumed from Kafka
 - [ ] Step 9: security model explained to your onboarding buddy
 - [ ] Step 10: validation and error layers understood
-- [ ] Step 11: metrics and runbook reviewed
+- [ ] Step 11: dashboard explored, an alert watched firing, runbook reviewed
 - [ ] Step 12: minimum notional change merged
 - [ ] Step 13: conventions understood

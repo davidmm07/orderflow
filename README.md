@@ -42,8 +42,9 @@ Events
   each market keeps its order.
 
 Operations
-- Prometheus metrics, liveness and readiness probes, JSON logs with
-  request ids.
+- Prometheus metrics from the engine and the HTTP layer, alert rules with
+  unit tests, and a provisioned Grafana dashboard in the compose stack.
+- Liveness and readiness probes, JSON logs with request ids.
 - Load shedding, backpressure, retries with jittered backoff.
 - Graceful shutdown that drains every queued order before exit.
 
@@ -86,7 +87,8 @@ make postman-env
 make flows
 ```
 
-To run the container image against Kafka (Redpanda):
+To run the container image against Kafka (Redpanda), with Prometheus and
+Grafana ([Observability and monitoring](#observability-and-monitoring)):
 
 ```bash
 make up
@@ -387,21 +389,73 @@ Matching benchmark (`make bench`, Criterion, release build, AMD Ryzen 7
 | Rest a non-crossing limit order on a 200 order book | about 1.2 us |
 | Sweep 10 price levels (40 fills) with one order | about 19 us |
 
-## Observability
+## Observability and monitoring
 
 - Logs are JSON lines in production (`ORDERFLOW_LOG_FORMAT=json`). Each
   request runs in a span with its method, path and `x-request-id`.
-- `/metrics` exposes `orderflow_orders_total{market,outcome}`,
-  `orderflow_trades_total{market}`,
-  `orderflow_engine_latency_seconds{market}` (histogram with buckets from
-  1 us to 5 ms), `orderflow_events_published_total` and
-  `orderflow_events_dropped_total`.
 - `/health/live` reports that the process is up, and `/health/ready`
   reports that every market engine is running.
+- `/metrics` serves Prometheus metrics from two layers:
+
+| Metric | Type | Labels | From |
+|---|---|---|---|
+| `orderflow_orders_total` | counter | `market`, `outcome` | matching engine |
+| `orderflow_trades_total` | counter | `market` | matching engine |
+| `orderflow_engine_latency_seconds` | histogram, 1 us to 5 ms | `market` | matching engine |
+| `orderflow_events_published_total`, `orderflow_events_dropped_total` | counter | none | event dispatcher |
+| `orderflow_http_requests_total` | counter | `method`, `route`, `status` | HTTP layer |
+| `orderflow_http_request_duration_seconds` | histogram, 250 us to 2.5 s | `route` | HTTP layer |
+| `orderflow_http_problems_total` | counter | `route`, `code` | HTTP layer |
+
+The HTTP metrics see what the engine never does: failed signatures, rate
+limits, load shedding and timeouts. Every label has a bounded set of
+values. Routes are templates such as `/v1/markets/{market}/orders`,
+unknown paths share the label `unmatched`, and problem codes are the fixed
+list in [docs/errors.md](docs/errors.md), so a client cannot create
+unlimited time series.
+
+### Prometheus and Grafana
+
+`make up` starts Prometheus and Grafana next to the service, configured
+from files in [`deploy/`](deploy):
+
+| URL | What is there |
+|---|---|
+| http://127.0.0.1:3000/d/orderflow | Grafana dashboard: health stats, orders and trades by market, matching latency, event pipeline, HTTP status codes, problems by code, route latency, load shedding and rate limits. Filter by market at the top. |
+| http://127.0.0.1:9090/alerts | Prometheus alert rules and their state |
+| http://127.0.0.1:9090/targets | Scrape status of the service |
+
+Alert rules ([`alerts.yml`](deploy/prometheus/alerts.yml)), each covered by
+a promtool unit test in [`alerts.test.yml`](deploy/prometheus/alerts.test.yml):
+
+| Alert | Fires when | Severity |
+|---|---|---|
+| `OrderflowDown` | Scrapes fail for 1 minute | critical |
+| `EventsDropped` | Any event is lost after retries | critical |
+| `MatchingLatencyHigh` | p99 matching latency on a market stays above 5 ms for 5 minutes | warning |
+| `LoadShedding` | Orders are turned away with `market_overloaded` for 2 minutes | warning |
+| `ServerErrorRateHigh` | More than 1% of requests end in 5xx for 5 minutes | warning |
+| `AuthenticationFailuresHigh` | More than one failed signature per second for 5 minutes | warning |
+
+Queries worth knowing, all used by the dashboard:
+
+```promql
+histogram_quantile(0.99, sum by (le, market) (rate(orderflow_engine_latency_seconds_bucket[5m])))
+sum by (market) (rate(orderflow_trades_total[1m]))
+sum by (code) (rate(orderflow_http_problems_total[1m]))
+sum(rate(orderflow_http_requests_total{status=~"5.."}[5m])) / sum(rate(orderflow_http_requests_total[5m]))
+```
+
+`make monitoring-check` validates the Prometheus config, runs the alert
+unit tests and checks the dashboard JSON; CI runs it on every push.
+Grafana runs view-only for local use: anonymous viewers, no login form and
+basic auth off, so the stack ships no default admin password. In
+production `/metrics` belongs on an internal network only, and Grafana
+sits behind single sign-on.
 
 ## Testing
 
-`make test` runs 103 tests, all offline:
+`make test` runs 107 tests, all offline:
 
 | Suite | Count | What it covers |
 |---|---|---|
@@ -409,7 +463,7 @@ Matching benchmark (`make bench`, Criterion, release build, AMD Ryzen 7
 | Domain property tests | 2 x 256 cases | Random order flow, stops included, keeps every book invariant; matching is deterministic |
 | Application tests | 7 | Use cases with hand written fakes, idempotency, load shedding |
 | Infrastructure tests | 11 | TTLs and caps with paused time, retry policy, wire schema, metrics |
-| API unit and HTTP tests | 15 + 18 | Signing, validation, stop orders, discovery, rate limits, timeouts, the full router end to end |
+| API unit and HTTP tests | 18 + 19 | Signing, validation, stop orders, discovery, rate limits, timeouts, HTTP metrics, the full router end to end |
 | Server tests | 9 | Config parsing, secret redaction, instrument catalog loading |
 
 Set `PROPTEST_CASES` for longer property runs; 20,000 cases take about two
@@ -494,6 +548,7 @@ crates/
   api/              HTTP layer (plus examples/sign.rs)
   server/           the `orderflow` binary
 config/instruments.json  assets and markets
+deploy/             Prometheus config, alert rules and tests, Grafana provisioning and dashboard
 docs/adr/           architecture decision records
 docs/openapi.yaml   API contract
 docs/errors.md      error catalog
