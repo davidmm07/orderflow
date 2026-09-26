@@ -1,0 +1,16 @@
+$kind: http-request
+url: '{{base_url}}/v1/markets/LINK-USD/orders/{{link_ask_id}}'
+method: GET
+headers:
+  x-orderflow-key: '{{trader_a_key}}'
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 200', function () { pm.response.to.have.status(200); });
+    pm.test('0.5 left', function () {
+        const body = pm.response.json();
+        pm.expect(body.status).to.eql('partially_filled');
+        pm.expect(body.remaining_quantity).to.eql('0.5');
+    });
+  language: text/javascript
+order: 10000

@@ -1,0 +1,25 @@
+$kind: http-request
+url: '{{base_url}}/v1/markets/LINK-USD/orders'
+method: POST
+headers:
+  content-type: application/json
+  x-orderflow-key: '{{trader_b_key}}'
+body:
+  type: json
+  content: |-
+    {
+      "side": "buy",
+      "type": "limit",
+      "price": "20",
+      "quantity": "1"
+    }
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 201', function () { pm.response.to.have.status(201); });
+    pm.test('filled', function () {
+        const body = pm.response.json();
+        pm.expect(body.order.status).to.eql('filled');
+    });
+  language: text/javascript
+order: 2000

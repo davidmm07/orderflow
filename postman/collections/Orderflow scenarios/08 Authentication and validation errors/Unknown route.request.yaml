@@ -1,0 +1,13 @@
+$kind: http-request
+url: '{{base_url}}/v1/nothing-here'
+method: GET
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 404', function () { pm.response.to.have.status(404); });
+    pm.test('problem code is route_not_found', function () {
+        pm.expect(pm.response.headers.get('content-type')).to.include('application/problem+json');
+        pm.expect(pm.response.json().code).to.eql('route_not_found');
+    });
+  language: text/javascript
+order: 14000

@@ -1,0 +1,24 @@
+$kind: http-request
+url: '{{base_url}}/v1/markets/BTC-USD/orders'
+method: POST
+headers:
+  content-type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "side": "buy",
+      "type": "limit",
+      "price": "100",
+      "quantity": "1"
+    }
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 401', function () { pm.response.to.have.status(401); });
+    pm.test('problem code is unauthenticated', function () {
+        pm.expect(pm.response.headers.get('content-type')).to.include('application/problem+json');
+        pm.expect(pm.response.json().code).to.eql('unauthenticated');
+    });
+  language: text/javascript
+order: 1000

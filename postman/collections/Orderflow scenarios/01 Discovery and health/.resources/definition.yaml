@@ -1,0 +1,3 @@
+$kind: collection
+description: 'Public endpoints: probes, the instrument catalog and market data. The first request checks the setup and explains what to fix when it fails.'
+order: 1000

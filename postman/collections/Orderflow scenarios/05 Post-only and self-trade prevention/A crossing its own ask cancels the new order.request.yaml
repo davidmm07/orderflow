@@ -1,0 +1,27 @@
+$kind: http-request
+url: '{{base_url}}/v1/markets/AVAX-USD/orders'
+method: POST
+headers:
+  content-type: application/json
+  x-orderflow-key: '{{trader_a_key}}'
+body:
+  type: json
+  content: |-
+    {
+      "side": "buy",
+      "type": "limit",
+      "price": "30",
+      "quantity": "1"
+    }
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 201', function () { pm.response.to.have.status(201); });
+    pm.test('cancel_newest is the default', function () {
+        const body = pm.response.json();
+        pm.expect(body.order.status).to.eql('cancelled');
+        pm.expect(body.order.cancel_reason).to.eql('self_trade_prevention');
+        pm.expect(body.fills).to.eql([]);
+    });
+  language: text/javascript
+order: 4000

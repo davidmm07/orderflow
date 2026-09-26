@@ -1,0 +1,26 @@
+$kind: http-request
+url: '{{base_url}}/v1/markets/ETH-USD/orders'
+method: POST
+headers:
+  content-type: application/json
+  x-orderflow-key: '{{trader_a_key}}'
+body:
+  type: json
+  content: |-
+    {
+      "side": "sell",
+      "type": "limit",
+      "price": "3000",
+      "quantity": "2"
+    }
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 201', function () { pm.response.to.have.status(201); });
+    pm.test('ask is open', function () {
+        const body = pm.response.json();
+        pm.expect(body.order.status).to.eql('open');
+    });
+    pm.collectionVariables.set('eth_ask_id', pm.response.json().order.id);
+  language: text/javascript
+order: 1000

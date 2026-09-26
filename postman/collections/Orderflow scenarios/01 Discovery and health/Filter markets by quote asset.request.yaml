@@ -1,0 +1,15 @@
+$kind: http-request
+url: '{{base_url}}/v1/markets?quote=EUR'
+method: GET
+queryParams:
+  quote: EUR
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 200', function () { pm.response.to.have.status(200); });
+    pm.test('only EUR markets', function () {
+        const body = pm.response.json();
+        pm.expect(body.markets.map(m => m.id)).to.eql(['BTC-EUR', 'ETH-EUR']);
+    });
+  language: text/javascript
+order: 6000

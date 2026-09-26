@@ -1,0 +1,15 @@
+$kind: http-request
+url: '{{base_url}}/v1/assets'
+method: GET
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 200', function () { pm.response.to.have.status(200); });
+    pm.test('catalog lists the configured assets', function () {
+        const body = pm.response.json();
+        const codes = body.assets.map(a => a.code);
+        pm.expect(codes.length).to.be.at.least(14);
+        pm.expect(codes).to.include.members(['BTC', 'ETH', 'USD', 'EUR', 'USDC']);
+    });
+  language: text/javascript
+order: 4000

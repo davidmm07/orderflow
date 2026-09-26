@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
-# Writes a Postman environment with the first two API credentials from .env,
-# so the scenario flows in postman/ can sign requests.
+# Writes the "Orderflow local" Postman environment (Native Git YAML format)
+# with the first two API credentials from .env, so the scenario flows in
+# postman/collections can sign requests. The Postman app lists it
+# automatically when the repository folder is open in Local View.
 #
 # The output holds secrets. It is git-ignored; never commit or share it.
 #
-#   ENV_FILE    source of the credentials   (default: .env)
-#   OUTPUT      environment file to write   (default: postman/local.postman_environment.json)
-#   ORDERFLOW_URL  server base URL          (default: from ORDERFLOW_BIND_ADDR)
+#   ENV_FILE       source of the credentials (default: .env)
+#   OUTPUT         environment file to write (default: postman/environments/orderflow-local.environment.yaml)
+#   ORDERFLOW_URL  server base URL           (default: from ORDERFLOW_BIND_ADDR)
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
 env_file=${ENV_FILE:-.env}
-output=${OUTPUT:-postman/local.postman_environment.json}
+output=${OUTPUT:-postman/environments/orderflow-local.environment.yaml}
 
 if [[ ! -f "$env_file" ]]; then
   echo "No $env_file found; run make env first." >&2
@@ -41,19 +43,23 @@ field() {
   esac
 }
 
-# Key ids and secrets are restricted to characters that need no JSON escaping.
-(umask 077 && cat >"$output" <<JSON
-{
-  "name": "Orderflow local",
-  "values": [
-    { "key": "base_url", "value": "${base_url}", "type": "default", "enabled": true },
-    { "key": "trader_a_key", "value": "$(field "${entries[0]}" key)", "type": "default", "enabled": true },
-    { "key": "trader_a_secret", "value": "$(field "${entries[0]}" secret)", "type": "secret", "enabled": true },
-    { "key": "trader_b_key", "value": "$(field "${entries[1]}" key)", "type": "default", "enabled": true },
-    { "key": "trader_b_secret", "value": "$(field "${entries[1]}" secret)", "type": "secret", "enabled": true }
-  ],
-  "_postman_variable_scope": "environment"
-}
-JSON
+# Key ids and secrets are restricted to characters that need no YAML quoting
+# beyond the single quotes used here.
+mkdir -p "$(dirname "$output")"
+(umask 077 && cat >"$output" <<YAML
+name: Orderflow local
+values:
+  - key: base_url
+    value: '${base_url}'
+  - key: trader_a_key
+    value: '$(field "${entries[0]}" key)'
+  - key: trader_a_secret
+    value: '$(field "${entries[0]}" secret)'
+  - key: trader_b_key
+    value: '$(field "${entries[1]}" key)'
+  - key: trader_b_secret
+    value: '$(field "${entries[1]}" secret)'
+YAML
 )
-echo "Wrote $output for $base_url. Import it into Postman or pass it to newman with -e."
+echo "Wrote $output for $base_url."
+echo "In Postman, select the \"Orderflow local\" environment; from a terminal, run make flows."

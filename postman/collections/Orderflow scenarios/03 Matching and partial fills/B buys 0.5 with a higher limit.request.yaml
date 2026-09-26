@@ -1,0 +1,30 @@
+$kind: http-request
+url: '{{base_url}}/v1/markets/ETH-USD/orders'
+method: POST
+headers:
+  content-type: application/json
+  x-orderflow-key: '{{trader_b_key}}'
+body:
+  type: json
+  content: |-
+    {
+      "side": "buy",
+      "type": "limit",
+      "price": "3005",
+      "quantity": "0.5"
+    }
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 201', function () { pm.response.to.have.status(201); });
+    pm.test('filled at the maker price', function () {
+        const body = pm.response.json();
+        pm.expect(body.order.status).to.eql('filled');
+        pm.expect(body.fills.length).to.eql(1);
+        pm.expect(body.fills[0].price).to.eql('3000');
+        pm.expect(body.fills[0].quantity).to.eql('0.5');
+        pm.expect(body.fills[0].liquidity).to.eql('taker');
+        pm.expect(body.fills[0].counterparty_order_id).to.eql(pm.collectionVariables.get('eth_ask_id'));
+    });
+  language: text/javascript
+order: 2000

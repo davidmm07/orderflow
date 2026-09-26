@@ -170,32 +170,54 @@ in [docs/errors.md](docs/errors.md).
 
 ## Step 4. Run the scenario flows
 
-The `postman/` folder holds a Postman collection with eight scenario flows.
-Each flow is a folder of requests that runs top to bottom, checks every
-response and passes ids from one request to the next. It is the fastest way
-to see the whole API working, and CI runs the same flows on every push.
+`postman/collections/Orderflow scenarios/` holds eight scenario flows in the
+Postman Collection v3 YAML format, the format Postman v12 uses for Native
+Git. Every request is its own `.request.yaml` file with its tests inline;
+each folder has a `.resources/definition.yaml`. A flow runs top to bottom,
+checks every response and passes ids from one request to the next. It is
+the fastest way to see the whole API working, and CI runs the same flows on
+every push.
 
 | Flow | Market | What it shows |
 |---|---|---|
-| 01 Discovery and health | all | Probes, assets, market filters, one market, book, metrics |
+| 01 Discovery and health | all | Setup preflight, probes, assets, market filters, one market, book, metrics |
 | 02 Limit order lifecycle | LTC-USD | Place, read, owner-only access, cancel, cancel twice |
 | 03 Matching and partial fills | ETH-USD | Partial fill at the maker price, market order, last price |
-| 04 Time in force | SOL-USD | IOC, FOK in both outcomes, market order with no liquidity |
+| 04 Time in force - IOC, FOK and market | SOL-USD | IOC, FOK in both outcomes, market order with no liquidity |
 | 05 Post-only and self-trade prevention | AVAX-USD | Post-only rejection, `cancel_newest`, `cancel_oldest` |
 | 06 Stop orders | LINK-USD | Pending stops, a passed stop rejected, buy and sell stops firing, cancel |
 | 07 Idempotent retries | BTC-USD | Replay with the same key, key reuse, malformed key |
 | 08 Authentication and validation errors | BTC-USD | 401, 404, 405 and 422 problem documents |
 
-Write the Postman environment from your `.env`. The file holds your
-secrets; it is git-ignored and must not be shared.
+First write the `Orderflow local` environment from your `.env`. It goes to
+`postman/environments/orderflow-local.environment.yaml`, holds your
+secrets, is git-ignored and must not be shared.
 
 ```bash
 make postman-env
 ```
 
-With the server from step 3 running, run every flow from the terminal. The
-target uses `npx newman`, or the `postman/newman` Docker image when Node is
-not installed.
+### In the Postman desktop app (v12 or later)
+
+1. Open **Files**, click **Open folder** and choose the repository root:
+   the folder that contains `postman/`, `.postman/` and `Cargo.toml`. Do
+   not choose `postman/` itself; Postman would create a second `postman/`
+   inside it.
+2. Switch to **Local View**. The `Orderflow scenarios` collection and the
+   `Orderflow local` and `Orderflow template` environments appear on their
+   own; nothing needs importing.
+3. Select the `Orderflow local` environment.
+4. With the server from step 3 running, open the collection, click
+   **Run**, and run one folder or all of them with the Collection Runner.
+
+The collection script signs every private request, so you never compute a
+signature by hand. Edits you make in Local View are saved straight into the
+YAML files, so they show up in `git diff` like code.
+
+### From the terminal
+
+The flows run with the Postman CLI, installed on demand through `npx`
+(Node 20 or later). Newman, the older runner, cannot read the v3 format.
 
 ```bash
 make flows
@@ -207,25 +229,39 @@ To run a single flow:
 make flows FLOW="06 Stop orders"
 ```
 
-To use the Postman app instead, import
-`postman/orderflow.postman_collection.json` and
-`postman/local.postman_environment.json`, select the environment, and run a
-folder with the Collection Runner. The collection's pre-request script
-signs every private request, so you never compute a signature by hand.
+To check the files against the collection schema after editing them:
+
+```bash
+make flows-lint
+```
 
 Each flow uses its own market and cancels what it leaves on the book, so
 the flows can run again on the same server. If a run stops halfway,
 restart the server to start from empty books.
 
-If `make postman-env` reports a single trader, your `.env` predates the
-flows. Add a second trader and restart the server:
+### When the flows fail
+
+The first request of flow 01, `Preflight - server build and environment`,
+checks the setup. Read its failure message first.
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Preflight: `GET /v1/assets must answer 200. An older build answers 404` | The server on port 8080 runs a build from before the flows existed, often a `make up` stack started earlier | Stop it and start the current code: `make run`, or `make down` then `make up` to rebuild the image |
+| Preflight: `trader_a_key is empty`, or signed requests stop with `Environment is missing trader_a_key...` | The `Orderflow template` environment is selected, or `make postman-env` was never run | Run `make postman-env` and select `Orderflow local` |
+| `make postman-env` says `.env` has 1 trader | `.env` was created before `make env` made two traders | `scripts/bootstrap-env.sh --add-trader`, restart the server, run `make postman-env` again |
+| Many `401 unauthenticated` | The environment does not match the server's `.env`, for example after regenerating `.env` | Restart the server and run `make postman-env` again |
+| A `postman/postman/` folder appears | The `postman/` folder was opened instead of the repository root | Close it in Postman, delete the nested folder, open the repository root |
+| `404 unknown_market` in a flow | The server loads an old instruments file | Check `ORDERFLOW_INSTRUMENTS_FILE` points at `config/instruments.json` |
+
+If `make postman-env` reports a single trader, add one and restart the
+server:
 
 ```bash
 scripts/bootstrap-env.sh --add-trader
 ```
 
-> Checkpoint: `make flows` reports 0 failed requests and 0 failed
-> assertions.
+> Checkpoint: the preflight passes, and the Collection Runner (or
+> `make flows`) reports 0 failed requests and 0 failed assertions.
 
 ---
 
@@ -570,7 +606,7 @@ Pull request checklist:
 | Change a matching rule | `crates/domain/src/engine.rs`, with a property test in mind |
 | List a new instrument | Add the asset (if new) and the market to `config/instruments.json`, then restart; see ADR 0004 |
 | Add a market parameter | `crates/domain/src/market.rs` and `crates/server/src/instruments.rs` |
-| Add a scenario flow | Postman app, then export over `postman/orderflow.postman_collection.json` and check it with `make flows` |
+| Add a scenario flow | Postman app in Local View, which writes the new `.request.yaml` files; then `make flows-lint` and `make flows` |
 | Add an endpoint | `crates/api/src/router.rs`, a handler, DTOs, then `docs/openapi.yaml` |
 | Add an event sink | Implement `EventPublisher` in the infrastructure crate and select it in `crates/server/src/app.rs` |
 | Replace in-memory storage | Implement `OrderRepository` and `IdempotencyStore` and wire them in `app.rs`; nothing else changes |

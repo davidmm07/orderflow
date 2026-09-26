@@ -1,0 +1,14 @@
+$kind: http-request
+url: '{{base_url}}/v1/markets'
+method: GET
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 200', function () { pm.response.to.have.status(200); });
+    pm.test('all instruments are listed', function () {
+        const body = pm.response.json();
+        pm.expect(body.markets.length).to.be.at.least(16);
+        pm.expect(body.markets.map(m => m.id)).to.include.members(['BTC-USD', 'ETH-BTC', 'USDT-USD']);
+    });
+  language: text/javascript
+order: 5000

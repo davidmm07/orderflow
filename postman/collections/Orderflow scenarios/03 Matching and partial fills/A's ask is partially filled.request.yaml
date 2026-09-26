@@ -1,0 +1,17 @@
+$kind: http-request
+url: '{{base_url}}/v1/markets/ETH-USD/orders/{{eth_ask_id}}'
+method: GET
+headers:
+  x-orderflow-key: '{{trader_a_key}}'
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 200', function () { pm.response.to.have.status(200); });
+    pm.test('1.5 remaining', function () {
+        const body = pm.response.json();
+        pm.expect(body.status).to.eql('partially_filled');
+        pm.expect(body.filled_quantity).to.eql('0.5');
+        pm.expect(body.remaining_quantity).to.eql('1.5');
+    });
+  language: text/javascript
+order: 3000

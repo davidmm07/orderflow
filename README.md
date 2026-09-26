@@ -421,31 +421,47 @@ scenario flows below.
 
 ## Scenario flows (Postman)
 
-[`postman/orderflow.postman_collection.json`](postman/orderflow.postman_collection.json)
-holds eight scenario flows with 77 requests and 226 assertions. Each flow
-is a folder that runs top to bottom, checks every response and passes ids
-to the next request. A collection pre-request script signs private
-requests, so nobody computes signatures by hand.
+[`postman/collections/Orderflow scenarios`](postman/collections/Orderflow%20scenarios)
+holds eight scenario flows with 78 requests and 229 assertions, stored in
+the Postman Collection v3 YAML format that Postman v12 reads and writes in
+Native Git mode: one `.request.yaml` file per request, with its tests
+inline, so changes to a flow review like code. Each flow is a folder that
+runs top to bottom, checks every response and passes ids to the next
+request. A collection script signs private requests, so nobody computes
+signatures by hand.
 
 | Flow | Market | Covers |
 |---|---|---|
-| 01 Discovery and health | all | Probes, assets, market filters, one market, book, metrics |
+| 01 Discovery and health | all | Setup preflight, probes, assets, market filters, one market, book, metrics |
 | 02 Limit order lifecycle | LTC-USD | Place, read, owner-only access, cancel, cancel twice |
 | 03 Matching and partial fills | ETH-USD | Partial fill at the maker price, market order, last price |
-| 04 Time in force | SOL-USD | IOC, FOK in both outcomes, market order with no liquidity |
+| 04 Time in force - IOC, FOK and market | SOL-USD | IOC, FOK in both outcomes, market order with no liquidity |
 | 05 Post-only and self-trade prevention | AVAX-USD | Post-only rejection, `cancel_newest`, `cancel_oldest` |
 | 06 Stop orders | LINK-USD | Pending stops, a passed stop rejected, buy and sell stops firing, cancel |
 | 07 Idempotent retries | BTC-USD | Replay with the same key, key reuse, malformed key |
 | 08 Authentication and validation errors | BTC-USD | 401, 404, 405 and 422 problem documents |
 
-`make postman-env` writes `postman/local.postman_environment.json` from
-`.env`. That file holds secrets and is git-ignored; the tracked
-`postman/orderflow.postman_environment.json` is an empty template for
-manual setup. Then either import both files into Postman and use the
-Collection Runner, or run `make flows` (all flows) or
-`make flows FLOW="06 Stop orders"` (one flow). Each flow uses its own
-market and cleans up after itself, so the flows can run again and again
-on the same server.
+In the Postman desktop app (v12 or later):
+
+1. Run `make postman-env`. It writes the `Orderflow local` environment to
+   `postman/environments/orderflow-local.environment.yaml` from your
+   `.env`. The file holds secrets and is git-ignored.
+2. In Postman, open **Files**, **Open folder**, and pick the repository
+   root, the folder that contains `postman/` and `.postman/`. Picking the
+   `postman/` folder itself makes Postman nest a second `postman/` inside
+   it.
+3. Switch to **Local View**, select the `Orderflow local` environment, start
+   the server, and run a folder or the whole collection with the
+   Collection Runner.
+
+From a terminal, the same flows run with the Postman CLI (Newman cannot
+read the v3 format): `make flows` runs all of them,
+`make flows FLOW="06 Stop orders"` runs one, and `make flows-lint` checks
+the files against the collection schema. Each flow uses its own market and
+cleans up after itself, so the flows can run again and again on the same
+server. The first request of flow 01 is a preflight: when it fails, its
+message says whether the server runs an older build or the environment is
+missing traders.
 
 ## Configuration
 
@@ -480,7 +496,8 @@ config/instruments.json  assets and markets
 docs/adr/           architecture decision records
 docs/openapi.yaml   API contract
 docs/errors.md      error catalog
-postman/            scenario flows and an environment template
+postman/            scenario flows (Collection v3 YAML), environment template
+.postman/           Postman Native Git settings
 scripts/            env bootstrap, Postman env writer, signed request helper
 ```
 

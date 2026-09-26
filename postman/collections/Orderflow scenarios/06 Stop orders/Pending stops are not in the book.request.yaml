@@ -1,0 +1,13 @@
+$kind: http-request
+url: '{{base_url}}/v1/markets/LINK-USD/book'
+method: GET
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 200', function () { pm.response.to.have.status(200); });
+    pm.test('no bid at 21.5', function () {
+        const body = pm.response.json();
+        pm.expect(body.bids.find(l => l.price === '21.5')).to.be.undefined;
+    });
+  language: text/javascript
+order: 6000

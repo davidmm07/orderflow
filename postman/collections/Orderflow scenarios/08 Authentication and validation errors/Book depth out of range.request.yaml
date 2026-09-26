@@ -1,0 +1,18 @@
+$kind: http-request
+url: '{{base_url}}/v1/markets/BTC-USD/book?depth=0'
+method: GET
+queryParams:
+  depth: '0'
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 422', function () { pm.response.to.have.status(422); });
+    pm.test('problem code is validation_failed', function () {
+        pm.expect(pm.response.headers.get('content-type')).to.include('application/problem+json');
+        pm.expect(pm.response.json().code).to.eql('validation_failed');
+    });
+    pm.test('field errors: depth', function () {
+        pm.expect(pm.response.json().errors.map(e => e.field)).to.eql(['depth']);
+    });
+  language: text/javascript
+order: 12000

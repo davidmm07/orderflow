@@ -1,0 +1,3 @@
+$kind: collection
+description: Trader A places a resting bid on LTC-USD, reads it back, checks that trader B cannot see or cancel it, then cancels it.
+order: 2000

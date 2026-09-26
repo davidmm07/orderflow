@@ -1,0 +1,22 @@
+$kind: http-request
+url: '{{base_url}}/v1/markets/LINK-USD/orders'
+method: POST
+headers:
+  content-type: application/json
+  x-orderflow-key: '{{trader_a_key}}'
+body:
+  type: json
+  content: |-
+    {
+      "side": "sell",
+      "type": "limit",
+      "price": "21",
+      "quantity": "2"
+    }
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 201', function () { pm.response.to.have.status(201); });
+    pm.collectionVariables.set('link_ask_id', pm.response.json().order.id);
+  language: text/javascript
+order: 7000

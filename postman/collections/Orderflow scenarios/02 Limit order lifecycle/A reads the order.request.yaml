@@ -1,0 +1,17 @@
+$kind: http-request
+url: '{{base_url}}/v1/markets/LTC-USD/orders/{{ltc_bid_id}}'
+method: GET
+headers:
+  x-orderflow-key: '{{trader_a_key}}'
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 200', function () { pm.response.to.have.status(200); });
+    pm.test('same order, still open', function () {
+        const body = pm.response.json();
+        pm.expect(body.id).to.eql(pm.collectionVariables.get('ltc_bid_id'));
+        pm.expect(body.remaining_quantity).to.eql('0.5');
+        pm.expect(body.client_order_id).to.eql('flow-ltc-bid');
+    });
+  language: text/javascript
+order: 2000

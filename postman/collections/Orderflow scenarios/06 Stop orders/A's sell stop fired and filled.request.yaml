@@ -1,0 +1,15 @@
+$kind: http-request
+url: '{{base_url}}/v1/markets/LINK-USD/orders/{{link_stop_sell_id}}'
+method: GET
+headers:
+  x-orderflow-key: '{{trader_a_key}}'
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 200', function () { pm.response.to.have.status(200); });
+    pm.test('stop filled', function () {
+        const body = pm.response.json();
+        pm.expect(body.status).to.eql('filled');
+    });
+  language: text/javascript
+order: 14000

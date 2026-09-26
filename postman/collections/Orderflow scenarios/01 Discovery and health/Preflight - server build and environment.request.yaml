@@ -1,0 +1,20 @@
+$kind: http-request
+url: '{{base_url}}/v1/assets'
+method: GET
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('server runs the current build', function () {
+        pm.expect(pm.response.code, 'GET /v1/assets must answer 200. An older build answers 404: ' +
+            'restart the server with make run, or rebuild the stack with make down then make up').to.eql(200);
+    });
+    pm.test('environment has two different traders', function () {
+        ['trader_a_key', 'trader_a_secret', 'trader_b_key', 'trader_b_secret'].forEach(function (name) {
+            pm.expect(pm.environment.get(name), name + ' is empty: run make postman-env and select "Orderflow local"')
+                .to.be.a('string').and.not.be.empty;
+        });
+        pm.expect(pm.environment.get('trader_a_key'), 'both traders use the same key')
+            .to.not.eql(pm.environment.get('trader_b_key'));
+    });
+  language: text/javascript
+order: 1000

@@ -1,0 +1,26 @@
+$kind: http-request
+url: '{{base_url}}/v1/markets/ETH-USD/orders'
+method: POST
+headers:
+  content-type: application/json
+  x-orderflow-key: '{{trader_b_key}}'
+body:
+  type: json
+  content: |-
+    {
+      "side": "buy",
+      "type": "market",
+      "quantity": "1.5"
+    }
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 201', function () { pm.response.to.have.status(201); });
+    pm.test('market order filled', function () {
+        const body = pm.response.json();
+        pm.expect(body.order.status).to.eql('filled');
+        pm.expect(body.order.type).to.eql('market');
+        pm.expect(body.fills[0].price).to.eql('3000');
+    });
+  language: text/javascript
+order: 4000

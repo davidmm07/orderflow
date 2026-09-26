@@ -1,0 +1,15 @@
+$kind: http-request
+url: '{{base_url}}/v1/markets/LTC-USD/orders/{{ltc_bid_id}}'
+method: GET
+headers:
+  x-orderflow-key: '{{trader_b_key}}'
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 404', function () { pm.response.to.have.status(404); });
+    pm.test('problem code is order_not_found', function () {
+        pm.expect(pm.response.headers.get('content-type')).to.include('application/problem+json');
+        pm.expect(pm.response.json().code).to.eql('order_not_found');
+    });
+  language: text/javascript
+order: 4000

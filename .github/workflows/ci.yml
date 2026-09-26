@@ -66,6 +66,7 @@ jobs:
           for _ in $(seq 1 30); do curl -sf localhost:8080/health/ready && exit 0; sleep 1; done
           cat server.log
           exit 1
+      - run: make flows-lint
       - run: make flows
 
   supply-chain:

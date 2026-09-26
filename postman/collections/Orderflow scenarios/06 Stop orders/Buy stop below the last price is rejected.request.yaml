@@ -1,0 +1,25 @@
+$kind: http-request
+url: '{{base_url}}/v1/markets/LINK-USD/orders'
+method: POST
+headers:
+  content-type: application/json
+  x-orderflow-key: '{{trader_b_key}}'
+body:
+  type: json
+  content: |-
+    {
+      "side": "buy",
+      "type": "stop_market",
+      "stop_price": "19",
+      "quantity": "1"
+    }
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 409', function () { pm.response.to.have.status(409); });
+    pm.test('problem code is stop_would_trigger_immediately', function () {
+        pm.expect(pm.response.headers.get('content-type')).to.include('application/problem+json');
+        pm.expect(pm.response.json().code).to.eql('stop_would_trigger_immediately');
+    });
+  language: text/javascript
+order: 5000

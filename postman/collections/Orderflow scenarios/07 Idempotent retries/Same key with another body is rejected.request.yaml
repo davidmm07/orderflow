@@ -1,0 +1,26 @@
+$kind: http-request
+url: '{{base_url}}/v1/markets/BTC-USD/orders'
+method: POST
+headers:
+  content-type: application/json
+  x-orderflow-key: '{{trader_a_key}}'
+  Idempotency-Key: '{{run_id}}-idem'
+body:
+  type: json
+  content: |-
+    {
+      "side": "buy",
+      "type": "limit",
+      "price": "20001",
+      "quantity": "0.01"
+    }
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 422', function () { pm.response.to.have.status(422); });
+    pm.test('problem code is idempotency_key_reused', function () {
+        pm.expect(pm.response.headers.get('content-type')).to.include('application/problem+json');
+        pm.expect(pm.response.json().code).to.eql('idempotency_key_reused');
+    });
+  language: text/javascript
+order: 3000

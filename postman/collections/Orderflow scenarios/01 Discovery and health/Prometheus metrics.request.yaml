@@ -1,0 +1,12 @@
+$kind: http-request
+url: '{{base_url}}/metrics'
+method: GET
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 200', function () { pm.response.to.have.status(200); });
+    pm.test('exposes engine metrics', function () {
+        pm.expect(pm.response.text()).to.include('orderflow_events_published_total');
+    });
+  language: text/javascript
+order: 10000

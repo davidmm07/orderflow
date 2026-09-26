@@ -1,0 +1,26 @@
+$kind: http-request
+url: '{{base_url}}/v1/markets/LINK-USD/orders'
+method: POST
+headers:
+  content-type: application/json
+  x-orderflow-key: '{{trader_a_key}}'
+body:
+  type: json
+  content: |-
+    {
+      "side": "sell",
+      "type": "stop_market",
+      "stop_price": "20.5",
+      "quantity": "0.5"
+    }
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 201', function () { pm.response.to.have.status(201); });
+    pm.test('stop waits', function () {
+        const body = pm.response.json();
+        pm.expect(body.order.status).to.eql('pending');
+    });
+    pm.collectionVariables.set('link_stop_sell_id', pm.response.json().order.id);
+  language: text/javascript
+order: 11000

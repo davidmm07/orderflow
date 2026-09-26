@@ -1,0 +1,3 @@
+$kind: collection
+description: Immediate-or-cancel fills what it can, fill-or-kill fills everything or nothing, and a market order with no liquidity is cancelled. Runs on SOL-USD.
+order: 4000

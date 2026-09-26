@@ -1,0 +1,20 @@
+$kind: http-request
+url: '{{base_url}}/v1/markets/SOL-USD/orders'
+method: POST
+headers:
+  content-type: application/json
+  x-orderflow-key: '{{trader_a_key}}'
+body:
+  type: json
+  content: |-
+    {
+      "side": "sell",
+      "type": "limit",
+      "price": "150",
+      "quantity": "1"
+    }
+scripts:
+- type: afterResponse
+  code: pm.test('status is 201', function () { pm.response.to.have.status(201); });
+  language: text/javascript
+order: 1000

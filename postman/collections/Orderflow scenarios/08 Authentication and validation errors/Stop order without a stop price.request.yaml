@@ -1,0 +1,28 @@
+$kind: http-request
+url: '{{base_url}}/v1/markets/BTC-USD/orders'
+method: POST
+headers:
+  content-type: application/json
+  x-orderflow-key: '{{trader_a_key}}'
+body:
+  type: json
+  content: |-
+    {
+      "side": "buy",
+      "type": "stop_limit",
+      "price": "100",
+      "quantity": "1"
+    }
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 422', function () { pm.response.to.have.status(422); });
+    pm.test('problem code is validation_failed', function () {
+        pm.expect(pm.response.headers.get('content-type')).to.include('application/problem+json');
+        pm.expect(pm.response.json().code).to.eql('validation_failed');
+    });
+    pm.test('field errors: stop_price', function () {
+        pm.expect(pm.response.json().errors.map(e => e.field)).to.eql(['stop_price']);
+    });
+  language: text/javascript
+order: 8000

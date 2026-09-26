@@ -20,5 +20,4 @@ secrets/
 .DS_Store
 
 # Postman environments generated from .env contain secrets
-postman/*.local.postman_environment.json
-postman/local.postman_environment.json
+postman/environments/*local.environment.yaml

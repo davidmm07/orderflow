@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help env run test lint fmt bench ci up down consume postman-env flows
+.PHONY: help env run test lint fmt bench ci up down consume postman-env flows flows-lint
 
 help: ## List the available targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -34,14 +34,15 @@ down: ## Stop the stack and remove its volumes
 consume: ## Print events from the topic as they arrive
 	docker compose exec redpanda rpk topic consume orderflow.events.v1 --format '%k %v\n'
 
-postman-env: ## Write the Postman environment from .env (git-ignored, holds secrets)
+postman-env: ## Write the "Orderflow local" Postman environment from .env (git-ignored, holds secrets)
 	./scripts/postman-env.sh
 
-flows: ## Run the Postman scenario flows against a running server; FLOW="06 Stop orders" runs one
-	@if command -v npx >/dev/null 2>&1; then \
-		npx --yes newman@6 run postman/orderflow.postman_collection.json \
-			-e postman/local.postman_environment.json $(if $(FLOW),--folder "$(FLOW)"); \
-	else \
-		docker run --rm --network host -v "$(CURDIR)/postman:/etc/newman" postman/newman:6-alpine \
-			run orderflow.postman_collection.json -e local.postman_environment.json $(if $(FLOW),--folder "$(FLOW)"); \
-	fi
+POSTMAN_CLI := npx --yes --package postman-cli@1 postman
+FLOWS := "postman/collections/Orderflow scenarios"
+FLOWS_ENV ?= postman/environments/orderflow-local.environment.yaml
+
+flows: ## Run the scenario flows with the Postman CLI; FLOW="06 Stop orders" runs one
+	$(POSTMAN_CLI) collection run $(FLOWS) -e "$(FLOWS_ENV)" $(if $(FLOW),-i "$(FLOW)")
+
+flows-lint: ## Validate the scenario flows against the Postman collection schema
+	$(POSTMAN_CLI) collection lint $(FLOWS)

@@ -1,0 +1,13 @@
+$kind: http-request
+url: '{{base_url}}/health/ready'
+method: GET
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 200', function () { pm.response.to.have.status(200); });
+    pm.test('every engine is running', function () {
+        const body = pm.response.json();
+        pm.expect(body.status).to.eql('ready');
+    });
+  language: text/javascript
+order: 3000

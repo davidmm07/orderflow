@@ -1,0 +1,30 @@
+$kind: http-request
+url: '{{base_url}}/v1/markets/LTC-USD/orders'
+method: POST
+headers:
+  content-type: application/json
+  x-orderflow-key: '{{trader_a_key}}'
+body:
+  type: json
+  content: |-
+    {
+      "side": "buy",
+      "type": "limit",
+      "price": "50.00",
+      "quantity": "0.5",
+      "client_order_id": "flow-ltc-bid"
+    }
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 201', function () { pm.response.to.have.status(201); });
+    pm.test('order rests on the book', function () {
+        const body = pm.response.json();
+        pm.expect(body.order.status).to.eql('open');
+        pm.expect(body.order.price).to.eql('50');
+        pm.expect(body.fills).to.eql([]);
+        pm.expect(pm.response.headers.get('location')).to.include(body.order.id);
+    });
+    pm.collectionVariables.set('ltc_bid_id', pm.response.json().order.id);
+  language: text/javascript
+order: 1000

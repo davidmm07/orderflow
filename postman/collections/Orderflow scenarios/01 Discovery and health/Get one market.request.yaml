@@ -1,0 +1,15 @@
+$kind: http-request
+url: '{{base_url}}/v1/markets/ETH-BTC'
+method: GET
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 200', function () { pm.response.to.have.status(200); });
+    pm.test('cross pair parameters', function () {
+        const body = pm.response.json();
+        pm.expect(body.base).to.eql('ETH');
+        pm.expect(body.quote).to.eql('BTC');
+        pm.expect(body.tick_size).to.eql('0.00001');
+    });
+  language: text/javascript
+order: 8000

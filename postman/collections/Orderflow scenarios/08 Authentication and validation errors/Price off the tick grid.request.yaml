@@ -1,0 +1,30 @@
+$kind: http-request
+url: '{{base_url}}/v1/markets/BTC-USD/orders'
+method: POST
+headers:
+  content-type: application/json
+  x-orderflow-key: '{{trader_a_key}}'
+body:
+  type: json
+  content: |-
+    {
+      "side": "buy",
+      "type": "limit",
+      "price": "100.001",
+      "quantity": "1"
+    }
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 422', function () { pm.response.to.have.status(422); });
+    pm.test('problem code is validation_failed', function () {
+        pm.expect(pm.response.headers.get('content-type')).to.include('application/problem+json');
+        pm.expect(pm.response.json().code).to.eql('validation_failed');
+    });
+    pm.test('tick error on price', function () {
+        const body = pm.response.json();
+        pm.expect(body.errors[0].field).to.eql('price');
+        pm.expect(body.errors[0].code).to.eql('price_not_on_tick');
+    });
+  language: text/javascript
+order: 6000

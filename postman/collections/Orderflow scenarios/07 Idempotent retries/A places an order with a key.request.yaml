@@ -1,0 +1,30 @@
+$kind: http-request
+url: '{{base_url}}/v1/markets/BTC-USD/orders'
+method: POST
+headers:
+  content-type: application/json
+  x-orderflow-key: '{{trader_a_key}}'
+  Idempotency-Key: '{{run_id}}-idem'
+body:
+  type: json
+  content: |-
+    {
+      "side": "buy",
+      "type": "limit",
+      "price": "20000",
+      "quantity": "0.01"
+    }
+scripts:
+- type: beforeRequest
+  code: pm.collectionVariables.set('run_id', Date.now().toString(36));
+  language: text/javascript
+- type: afterResponse
+  code: |-
+    pm.test('status is 201', function () { pm.response.to.have.status(201); });
+    pm.test('not a replay', function () {
+        const body = pm.response.json();
+        pm.expect(pm.response.headers.has('idempotent-replayed')).to.be.false;
+    });
+    pm.collectionVariables.set('btc_idem_id', pm.response.json().order.id);
+  language: text/javascript
+order: 1000

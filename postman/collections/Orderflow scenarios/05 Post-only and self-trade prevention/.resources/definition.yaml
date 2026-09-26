@@ -1,0 +1,3 @@
+$kind: collection
+description: Post-only orders never take liquidity, and an account never trades with itself. Runs on AVAX-USD and cancels everything it leaves behind.
+order: 5000

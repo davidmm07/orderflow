@@ -1,0 +1,3 @@
+$kind: collection
+description: Stop orders wait outside the book until a trade reaches their stop price. The flow sets the last price with a trade, places a buy stop-limit and a sell stop-market, moves the price through both, and cleans up. Runs on LINK-USD.
+order: 6000

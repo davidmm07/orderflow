@@ -1,0 +1,10 @@
+$kind: http-request
+url: '{{base_url}}/v1/markets/BTC-USD/orders/{{btc_idem_id}}'
+method: DELETE
+headers:
+  x-orderflow-key: '{{trader_a_key}}'
+scripts:
+- type: afterResponse
+  code: pm.test('status is 200', function () { pm.response.to.have.status(200); });
+  language: text/javascript
+order: 5000

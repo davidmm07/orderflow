@@ -1,0 +1,3 @@
+$kind: collection
+description: A rests an ask on ETH-USD, B takes part of it with a limit order and the rest with a market order. Trades happen at the maker's price.
+order: 3000

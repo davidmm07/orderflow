@@ -1,0 +1,25 @@
+$kind: http-request
+url: '{{base_url}}/v1/markets/SOL-USD/orders'
+method: POST
+headers:
+  content-type: application/json
+  x-orderflow-key: '{{trader_b_key}}'
+body:
+  type: json
+  content: |-
+    {
+      "side": "buy",
+      "type": "market",
+      "quantity": "0.5"
+    }
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 201', function () { pm.response.to.have.status(201); });
+    pm.test('cancelled for lack of liquidity', function () {
+        const body = pm.response.json();
+        pm.expect(body.order.status).to.eql('cancelled');
+        pm.expect(body.order.cancel_reason).to.eql('no_liquidity');
+    });
+  language: text/javascript
+order: 7000

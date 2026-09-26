@@ -1,0 +1,3 @@
+$kind: collection
+description: A retry with the same Idempotency-Key returns the original order instead of placing a second one. Runs on BTC-USD.
+order: 7000

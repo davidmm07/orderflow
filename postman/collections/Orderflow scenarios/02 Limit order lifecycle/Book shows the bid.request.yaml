@@ -1,0 +1,17 @@
+$kind: http-request
+url: '{{base_url}}/v1/markets/LTC-USD/book?depth=5'
+method: GET
+queryParams:
+  depth: '5'
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 200', function () { pm.response.to.have.status(200); });
+    pm.test('level at 50', function () {
+        const body = pm.response.json();
+        const level = body.bids.find(l => l.price === '50');
+        pm.expect(level, 'bid level at 50').to.exist;
+        pm.expect(Number(level.quantity)).to.be.at.least(0.5);
+    });
+  language: text/javascript
+order: 3000
