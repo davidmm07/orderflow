@@ -21,7 +21,7 @@ sha2.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["time"] }
 tower = { workspace = true, features = ["util"] }
-tower-http = { workspace = true, features = ["catch-panic", "request-id", "set-header", "timeout", "trace", "util"] }
+tower-http = { workspace = true, features = ["catch-panic", "request-id", "set-header", "trace", "util"] }
 tracing.workspace = true
 
 [dev-dependencies]

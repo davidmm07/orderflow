@@ -4,9 +4,9 @@ use std::{any::Any, time::Duration};
 
 use axum::{
     Router,
-    extract::DefaultBodyLimit,
+    extract::{DefaultBodyLimit, Request as AxumRequest, State},
     http::{HeaderValue, Request, StatusCode, header},
-    middleware,
+    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::get,
 };
@@ -15,7 +15,6 @@ use tower_http::{
     catch_panic::CatchPanicLayer,
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
     set_header::SetResponseHeaderLayer,
-    timeout::TimeoutLayer,
     trace::TraceLayer,
 };
 
@@ -29,7 +28,8 @@ use crate::{
 
 #[derive(Debug, Clone, Copy)]
 pub struct ApiConfig {
-    /// Upper bound for a whole request, after which the client gets 503.
+    /// Upper bound for a whole request, after which the client gets a 503
+    /// `request_timeout` problem.
     pub request_timeout: Duration,
     pub max_body_bytes: usize,
 }
@@ -80,9 +80,9 @@ pub fn router(state: AppState, config: &ApiConfig) -> Router {
                 .layer(PropagateRequestIdLayer::x_request_id())
                 .layer(TraceLayer::new_for_http().make_span_with(request_span))
                 .layer(CatchPanicLayer::custom(panic_response))
-                .layer(TimeoutLayer::with_status_code(
-                    StatusCode::SERVICE_UNAVAILABLE,
+                .layer(middleware::from_fn_with_state(
                     config.request_timeout,
+                    enforce_timeout,
                 ))
                 .layer(SetResponseHeaderLayer::overriding(
                     header::X_CONTENT_TYPE_OPTIONS,
@@ -112,6 +112,30 @@ fn request_span<B>(request: &Request<B>) -> tracing::Span {
     )
 }
 
+/// Bounds request latency and answers with a problem document, which
+/// `tower_http::timeout` cannot do (it returns an empty body).
+///
+/// A timed out order placement may still complete: placement runs on its
+/// own task. Clients retry with the same `Idempotency-Key` to learn the
+/// outcome without placing a second order.
+async fn enforce_timeout(
+    State(timeout): State<Duration>,
+    request: AxumRequest,
+    next: Next,
+) -> Response {
+    match tokio::time::timeout(timeout, next.run(request)).await {
+        Ok(response) => response,
+        Err(_) => ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "request_timeout",
+            "Request timed out",
+            "The request did not complete in time. Retry with the same Idempotency-Key.",
+        )
+        .retry_after(Duration::from_secs(1))
+        .into_response(),
+    }
+}
+
 fn panic_response(_: Box<dyn Any + Send + 'static>) -> Response {
     ApiError::internal("handler panicked").into_response()
 }
@@ -132,4 +156,38 @@ async fn method_not_allowed() -> ApiError {
         "Method not allowed",
         "This route does not support the request method.",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::body::Body;
+    use tower::ServiceExt;
+
+    use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn slow_handlers_get_a_timeout_problem() {
+        let app = Router::new()
+            .route(
+                "/slow",
+                get(|| async {
+                    tokio::time::sleep(Duration::from_secs(60)).await;
+                    "too late"
+                }),
+            )
+            .layer(middleware::from_fn_with_state(
+                Duration::from_millis(50),
+                enforce_timeout,
+            ));
+
+        let request = Request::builder().uri("/slow").body(Body::empty()).unwrap();
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(response.headers()[header::RETRY_AFTER], "1");
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            crate::error::PROBLEM_JSON
+        );
+    }
 }

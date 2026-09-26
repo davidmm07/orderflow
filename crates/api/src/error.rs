@@ -134,7 +134,7 @@ impl ApiError {
         error
     }
 
-    fn retry_after(mut self, wait: Duration) -> Self {
+    pub(crate) fn retry_after(mut self, wait: Duration) -> Self {
         // Retry-After takes whole seconds; round up so clients never retry early.
         let secs = wait.as_secs() + u64::from(wait.subsec_nanos() > 0);
         self.0.retry_after = Some(secs.max(1));
