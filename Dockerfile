@@ -19,10 +19,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 FROM gcr.io/distroless/cc-debian13:nonroot
 
 COPY --from=build /usr/local/bin/orderflow /usr/local/bin/orderflow
-COPY config/markets.json /etc/orderflow/markets.json
+COPY config/instruments.json /etc/orderflow/instruments.json
 
 ENV ORDERFLOW_BIND_ADDR=0.0.0.0:8080 \
-    ORDERFLOW_MARKETS_FILE=/etc/orderflow/markets.json \
+    ORDERFLOW_INSTRUMENTS_FILE=/etc/orderflow/instruments.json \
     ORDERFLOW_LOG_FORMAT=json
 
 EXPOSE 8080

@@ -5,6 +5,7 @@ use std::{fmt, sync::Arc};
 use rust_decimal::Decimal;
 
 use crate::{
+    asset::{AssetCode, is_asset_code},
     error::DomainError,
     numeric::{Price, Quantity},
     order::NewOrder,
@@ -29,6 +30,16 @@ impl MarketId {
         }
     }
 
+    /// Builds the id of the market that trades `base` against `quote`.
+    pub fn from_assets(base: &AssetCode, quote: &AssetCode) -> Result<Self, DomainError> {
+        if base == quote {
+            return Err(DomainError::InvalidMarketSpec(
+                "base and quote must be different assets",
+            ));
+        }
+        Self::parse(&format!("{base}-{quote}"))
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -46,13 +57,6 @@ impl fmt::Display for MarketId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
     }
-}
-
-fn is_asset_code(code: &str) -> bool {
-    (2..=10).contains(&code.len())
-        && code
-            .bytes()
-            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
 }
 
 /// Trading parameters for one market.

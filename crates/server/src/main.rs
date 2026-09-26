@@ -3,6 +3,7 @@
 
 mod app;
 mod config;
+mod instruments;
 mod telemetry;
 
 use std::process::ExitCode;
@@ -36,9 +37,9 @@ async fn main() -> ExitCode {
 }
 
 async fn run(settings: Settings) -> anyhow::Result<()> {
-    let markets = config::load_markets(&settings.markets_file)?;
-    let market_count = markets.len();
-    let app = app::build(&settings, markets)?;
+    let catalog = instruments::load(&settings.instruments_file)?;
+    let market_count = catalog.market_count();
+    let app = app::build(&settings, catalog)?;
 
     let listener = tokio::net::TcpListener::bind(settings.bind_addr)
         .await

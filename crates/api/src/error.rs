@@ -284,8 +284,14 @@ impl From<DomainError> for ApiError {
                 error.to_string(),
             ),
             DomainError::InvalidOrderId => order_not_found("that id"),
+            DomainError::InvalidAssetCode => field("asset", &error),
             DomainError::OrderNotFound(id) => order_not_found(&id.to_string()),
             DomainError::DuplicateOrderId(_)
+            | DomainError::InvalidAsset(_)
+            | DomainError::DuplicateAsset(_)
+            | DomainError::DuplicateMarket(_)
+            | DomainError::UnknownAsset(_)
+            | DomainError::LotSizeTooPrecise { .. }
             | DomainError::InvalidAccountId
             | DomainError::MarketMismatch { .. }
             | DomainError::InvalidMarketSpec(_)

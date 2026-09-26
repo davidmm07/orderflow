@@ -73,6 +73,7 @@ server log, next to the request id.
 | `client_order_id` | `invalid_client_order_id` | Not 1 to 36 characters of letters, digits, `-` or `_` |
 | `Idempotency-Key` | `invalid_idempotency_key` | Not 1 to 64 visible ASCII characters |
 | `depth` | `out_of_range` | Book depth outside 1 to 100 |
+| `base`, `quote` | `invalid_asset_code` | Market filter that is not 2 to 10 uppercase letters or digits |
 
 ## Adding a new error
 

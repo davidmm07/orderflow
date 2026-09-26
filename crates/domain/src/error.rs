@@ -3,6 +3,7 @@
 use rust_decimal::Decimal;
 
 use crate::{
+    asset::AssetCode,
     ids::OrderId,
     market::MarketId,
     numeric::{Price, Quantity},
@@ -60,6 +61,24 @@ pub enum DomainError {
     OrderNotFound(OrderId),
     #[error("market id must look like BASE-QUOTE, for example BTC-USD")]
     InvalidMarketId,
+    #[error("asset code must be 2 to 10 uppercase letters or digits")]
+    InvalidAssetCode,
+    #[error("invalid asset: {0}")]
+    InvalidAsset(&'static str),
+    #[error("asset {0} is listed twice")]
+    DuplicateAsset(AssetCode),
+    #[error("market {0} is listed twice")]
+    DuplicateMarket(MarketId),
+    #[error("asset {0} is not listed")]
+    UnknownAsset(String),
+    #[error(
+        "market {market} has lot size {lot_size}, finer than the {decimals} decimals of its base asset"
+    )]
+    LotSizeTooPrecise {
+        market: MarketId,
+        lot_size: Decimal,
+        decimals: u32,
+    },
     #[error("account id must be 1 to 64 characters of letters, digits, '-' or '_'")]
     InvalidAccountId,
     #[error("client order id must be 1 to 36 characters of letters, digits, '-' or '_'")]
@@ -92,6 +111,12 @@ impl DomainError {
             Self::DuplicateOrderId(_) => "duplicate_order_id",
             Self::OrderNotFound(_) => "order_not_found",
             Self::InvalidMarketId => "invalid_market_id",
+            Self::InvalidAssetCode => "invalid_asset_code",
+            Self::InvalidAsset(_) => "invalid_asset",
+            Self::DuplicateAsset(_) => "duplicate_asset",
+            Self::DuplicateMarket(_) => "duplicate_market",
+            Self::UnknownAsset(_) => "unknown_asset",
+            Self::LotSizeTooPrecise { .. } => "lot_size_too_precise",
             Self::InvalidAccountId => "invalid_account_id",
             Self::InvalidClientOrderId => "invalid_client_order_id",
             Self::InvalidOrderId => "invalid_order_id",

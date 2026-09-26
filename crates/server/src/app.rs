@@ -9,7 +9,7 @@ use orderflow_application::{
     CancelOrder, EventDispatcher, EventPublisher, MarketDeps, MarketRegistry, OrderQueries,
     OrderRepository, PlaceOrder, outbox, spawn_market,
 };
-use orderflow_domain::MarketSpec;
+use orderflow_domain::InstrumentCatalog;
 #[cfg(feature = "kafka")]
 use orderflow_infrastructure::{
     FanoutPublisher, KafkaEventPublisher, RetryPolicy, RetryingPublisher,
@@ -35,7 +35,8 @@ pub struct Application {
 /// happens here and nowhere else: inner layers receive trait objects and
 /// never construct adapters themselves. Replacing the in-memory repository
 /// with a database is a change to this function only.
-pub fn build(settings: &Settings, markets: Vec<MarketSpec>) -> anyhow::Result<Application> {
+pub fn build(settings: &Settings, catalog: InstrumentCatalog) -> anyhow::Result<Application> {
+    let (assets, markets) = catalog.into_parts();
     let metrics = Arc::new(PrometheusMetrics::new());
     let repository: Arc<dyn OrderRepository> = Arc::new(InMemoryOrderRepository::default());
 
@@ -61,7 +62,7 @@ pub fn build(settings: &Settings, markets: Vec<MarketSpec>) -> anyhow::Result<Ap
     // and the dispatcher exits, once the last actor has drained.
     drop(deps);
 
-    let registry = Arc::new(MarketRegistry::new(handles));
+    let registry = Arc::new(MarketRegistry::new(handles).with_assets(assets));
     let credentials = settings
         .credentials
         .iter()

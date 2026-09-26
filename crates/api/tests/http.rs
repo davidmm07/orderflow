@@ -21,7 +21,9 @@ use orderflow_application::{
     CancelOrder, EventDispatcher, MarketDeps, MarketRegistry, OrderQueries, PlaceOrder, outbox,
     spawn_market,
 };
-use orderflow_domain::{AccountId, Decimal, MarketId, MarketSpec};
+use orderflow_domain::{
+    AccountId, Asset, AssetCode, Decimal, InstrumentCatalog, MarketId, MarketSpec,
+};
 use orderflow_infrastructure::{
     InMemoryIdempotencyStore, InMemoryOrderRepository, LoggingPublisher, MonotonicClock,
     PrometheusMetrics, UuidV7Generator,
@@ -41,20 +43,18 @@ fn app_with(rate_limit: RateLimitConfig) -> Router {
     let (outbox, receiver) = outbox(64);
     EventDispatcher::new(receiver, Arc::new(LoggingPublisher), metrics.clone()).spawn();
 
-    let spec = MarketSpec::builder(MarketId::parse("BTC-USD").unwrap())
-        .tick_size(Decimal::new(1, 2))
-        .lot_size(Decimal::new(1, 3))
-        .max_quantity(Decimal::from(100))
-        .build()
-        .unwrap();
     let deps = MarketDeps {
         repository: repository.clone(),
         clock: Arc::new(MonotonicClock::default()),
         metrics: metrics.clone(),
         outbox,
     };
-    let (handle, _task) = spawn_market(spec, deps, 128);
-    let registry = Arc::new(MarketRegistry::new([handle]));
+    let (assets, markets) = catalog().into_parts();
+    let handles: Vec<_> = markets
+        .into_iter()
+        .map(|spec| spawn_market(spec, deps.clone(), 128).0)
+        .collect();
+    let registry = Arc::new(MarketRegistry::new(handles).with_assets(assets));
 
     let credential = |account: &str, secret: &[u8]| {
         Credential::new(AccountId::parse(account).unwrap(), secret).unwrap()
@@ -85,6 +85,26 @@ fn app_with(rate_limit: RateLimitConfig) -> Router {
             max_body_bytes: MAX_BODY,
         },
     )
+}
+
+/// BTC, ETH and USD, with BTC-USD and ETH-USD listed.
+fn catalog() -> InstrumentCatalog {
+    let mut catalog = InstrumentCatalog::new();
+    for (code, name) in [("BTC", "Bitcoin"), ("ETH", "Ether"), ("USD", "US Dollar")] {
+        let decimals = if code == "USD" { 2 } else { 8 };
+        let asset = Asset::new(AssetCode::parse(code).unwrap(), name, decimals).unwrap();
+        catalog.add_asset(asset).unwrap();
+    }
+    for id in ["BTC-USD", "ETH-USD"] {
+        let spec = MarketSpec::builder(MarketId::parse(id).unwrap())
+            .tick_size(Decimal::new(1, 2))
+            .lot_size(Decimal::new(1, 3))
+            .max_quantity(Decimal::from(100))
+            .build()
+            .unwrap();
+        catalog.add_market(spec).unwrap();
+    }
+    catalog
 }
 
 fn app() -> Router {
@@ -626,6 +646,55 @@ async fn stop_fields_are_validated() {
     let path = format!("{ORDERS}/{}", placed.body["order"]["id"].as_str().unwrap());
     let cancelled = send(&app, ALICE.request("DELETE", &path, None)).await;
     assert_eq!(cancelled.body["status"], "cancelled");
+}
+
+#[tokio::test]
+async fn instruments_can_be_discovered_and_filtered() {
+    let app = app();
+    let assets = send(&app, get("/v1/assets")).await;
+    let codes: Vec<_> = assets.body["assets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["code"].as_str().unwrap())
+        .collect();
+    assert_eq!(codes, ["BTC", "ETH", "USD"]);
+    assert_eq!(assets.body["assets"][0]["decimals"], 8);
+
+    let ids = |reply: &Reply| -> Vec<String> {
+        reply.body["markets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["id"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    assert_eq!(
+        ids(&send(&app, get("/v1/markets?base=ETH")).await),
+        ["ETH-USD"]
+    );
+    assert_eq!(
+        ids(&send(&app, get("/v1/markets?quote=USD")).await),
+        ["BTC-USD", "ETH-USD"]
+    );
+    assert!(ids(&send(&app, get("/v1/markets?base=DOGE")).await).is_empty());
+
+    let bad_filter = send(&app, get("/v1/markets?base=eth")).await;
+    assert_problem(
+        &bad_filter,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "validation_failed",
+    );
+    assert_eq!(error_fields(&bad_filter), ["base"]);
+
+    let one = send(&app, get("/v1/markets/ETH-USD")).await;
+    assert_eq!(one.status, StatusCode::OK);
+    assert_eq!(one.body["base"], "ETH");
+    assert_problem(
+        &send(&app, get("/v1/markets/DOGE-USD")).await,
+        StatusCode::NOT_FOUND,
+        "unknown_market",
+    );
 }
 
 fn uuid_like() -> &'static str {

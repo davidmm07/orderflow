@@ -8,7 +8,9 @@
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use orderflow_application::OrderReceipt;
-use orderflow_domain::{BookSnapshot, LevelView, MarketSpec, Order, OrderId, Timestamp, Trade};
+use orderflow_domain::{
+    Asset, BookSnapshot, LevelView, MarketSpec, Order, OrderId, Timestamp, Trade,
+};
 use serde::{Deserialize, Serialize};
 
 /// Body of `POST /v1/markets/{market}/orders`.
@@ -35,6 +37,14 @@ pub struct PlaceOrderRequest {
 #[serde(deny_unknown_fields)]
 pub struct BookQuery {
     pub depth: Option<u32>,
+}
+
+/// Filters for `GET /v1/markets`. Both are optional and combine with AND.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MarketsQuery {
+    pub base: Option<String>,
+    pub quote: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -162,6 +172,28 @@ impl From<&MarketSpec> for MarketView {
 #[derive(Debug, Serialize)]
 pub struct MarketsResponse {
     pub markets: Vec<MarketView>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AssetView {
+    pub code: String,
+    pub name: String,
+    pub decimals: u32,
+}
+
+impl From<&Asset> for AssetView {
+    fn from(asset: &Asset) -> Self {
+        Self {
+            code: asset.code().to_string(),
+            name: asset.name().to_owned(),
+            decimals: asset.decimals(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct AssetsResponse {
+    pub assets: Vec<AssetView>,
 }
 
 #[derive(Debug, Serialize)]

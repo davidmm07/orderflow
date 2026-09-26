@@ -25,11 +25,38 @@ tags:
     description: Health and metrics.
 
 paths:
+  /v1/assets:
+    get:
+      tags: [Markets]
+      operationId: listAssets
+      summary: List the assets that listed markets trade.
+      responses:
+        "200":
+          description: Assets sorted by code.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [assets]
+                properties:
+                  assets:
+                    type: array
+                    items: { $ref: "#/components/schemas/Asset" }
+
   /v1/markets:
     get:
       tags: [Markets]
       operationId: listMarkets
-      summary: List tradable markets and their parameters.
+      summary: List tradable markets and their parameters, optionally filtered by asset.
+      parameters:
+        - name: base
+          in: query
+          required: false
+          schema: { type: string, pattern: "^[A-Z0-9]{2,10}$", example: BTC }
+        - name: quote
+          in: query
+          required: false
+          schema: { type: string, pattern: "^[A-Z0-9]{2,10}$", example: USD }
       responses:
         "200":
           description: Listed markets, sorted by id.
@@ -42,6 +69,22 @@ paths:
                   markets:
                     type: array
                     items: { $ref: "#/components/schemas/Market" }
+        "422": { $ref: "#/components/responses/Problem" }
+
+  /v1/markets/{market}:
+    get:
+      tags: [Markets]
+      operationId: getMarket
+      summary: One market and its trading parameters.
+      parameters:
+        - $ref: "#/components/parameters/Market"
+      responses:
+        "200":
+          description: The market.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Market" }
+        "404": { $ref: "#/components/responses/Problem" }
 
   /v1/markets/{market}/book:
     get:
@@ -329,6 +372,14 @@ components:
         fills:
           type: array
           items: { $ref: "#/components/schemas/Fill" }
+
+    Asset:
+      type: object
+      required: [code, name, decimals]
+      properties:
+        code: { type: string, example: BTC }
+        name: { type: string, example: Bitcoin }
+        decimals: { type: integer, description: Finest fraction of the asset a market may trade. }
 
     Market:
       type: object

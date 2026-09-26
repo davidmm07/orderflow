@@ -5,16 +5,14 @@
 
 use std::{
     fmt::{self, Display},
-    fs,
     net::SocketAddr,
-    path::{Path, PathBuf},
+    path::PathBuf,
     str::FromStr,
     time::Duration,
 };
 
 use orderflow_api::RateLimitConfig;
-use orderflow_domain::{AccountId, Decimal, MarketId, MarketSpec};
-use serde::Deserialize;
+use orderflow_domain::AccountId;
 
 /// Shortest accepted API secret, mirrored from the API crate.
 const MIN_SECRET_LEN: usize = 32;
@@ -62,7 +60,7 @@ pub enum EventSink {
 pub struct Settings {
     pub bind_addr: SocketAddr,
     pub log_format: LogFormat,
-    pub markets_file: PathBuf,
+    pub instruments_file: PathBuf,
     pub credentials: Vec<ApiCredential>,
     pub request_timeout: Duration,
     pub max_body_bytes: usize,
@@ -105,7 +103,8 @@ impl Settings {
                 LogFormat::Json
             }
         };
-        let markets_file = PathBuf::from(env.text("ORDERFLOW_MARKETS_FILE", "config/markets.json"));
+        let instruments_file =
+            PathBuf::from(env.text("ORDERFLOW_INSTRUMENTS_FILE", "config/instruments.json"));
         let credentials = env.credentials("ORDERFLOW_API_CREDENTIALS");
         let request_timeout =
             Duration::from_millis(env.positive("ORDERFLOW_REQUEST_TIMEOUT_MS", 5_000));
@@ -150,7 +149,7 @@ impl Settings {
         Ok(Self {
             bind_addr,
             log_format,
-            markets_file,
+            instruments_file,
             credentials,
             request_timeout,
             max_body_bytes,
@@ -268,67 +267,6 @@ impl<F: Fn(&str) -> Option<String>> Env<F> {
     }
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct MarketsFile {
-    markets: Vec<MarketEntry>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct MarketEntry {
-    id: String,
-    tick_size: String,
-    lot_size: String,
-    min_quantity: Option<String>,
-    max_quantity: String,
-}
-
-/// Loads and validates the market list. Market parameters are not secret,
-/// so they live in a versioned file rather than in the environment.
-pub fn load_markets(path: &Path) -> Result<Vec<MarketSpec>, ConfigError> {
-    let fail = |message: String| ConfigError(vec![message]);
-    let text = fs::read_to_string(path)
-        .map_err(|error| fail(format!("cannot read {}: {error}", path.display())))?;
-    let file: MarketsFile = serde_json::from_str(&text)
-        .map_err(|error| fail(format!("{}: {error}", path.display())))?;
-
-    let mut problems = Vec::new();
-    let mut specs: Vec<MarketSpec> = Vec::new();
-    for entry in file.markets {
-        match market_spec(&entry) {
-            Ok(spec) if specs.iter().any(|s| s.id() == spec.id()) => {
-                problems.push(format!("market {} is listed twice", spec.id()));
-            }
-            Ok(spec) => specs.push(spec),
-            Err(message) => problems.push(format!("market {:?}: {message}", entry.id)),
-        }
-    }
-    if specs.is_empty() && problems.is_empty() {
-        problems.push(format!("{} lists no markets", path.display()));
-    }
-    if problems.is_empty() {
-        Ok(specs)
-    } else {
-        Err(ConfigError(problems))
-    }
-}
-
-fn market_spec(entry: &MarketEntry) -> Result<MarketSpec, String> {
-    let decimal = |field: &str, raw: &str| {
-        Decimal::from_str_exact(raw).map_err(|_| format!("{field} {raw:?} is not a decimal"))
-    };
-    let id = MarketId::parse(&entry.id).map_err(|error| error.to_string())?;
-    let mut builder = MarketSpec::builder(id)
-        .tick_size(decimal("tick_size", &entry.tick_size)?)
-        .lot_size(decimal("lot_size", &entry.lot_size)?)
-        .max_quantity(decimal("max_quantity", &entry.max_quantity)?);
-    if let Some(min) = &entry.min_quantity {
-        builder = builder.min_quantity(decimal("min_quantity", min)?);
-    }
-    builder.build().map_err(|error| error.to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -391,12 +329,5 @@ mod tests {
         let credentials = format!("k:alice:{SECRET},k:bob:{SECRET}");
         let error = settings(&[("ORDERFLOW_API_CREDENTIALS", &credentials)]).unwrap_err();
         assert!(error.to_string().contains("repeats key id"));
-    }
-
-    #[test]
-    fn bundled_market_file_is_valid() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/markets.json");
-        let markets = load_markets(&path).unwrap();
-        assert!(markets.iter().any(|m| m.id().as_str() == "BTC-USD"));
     }
 }

@@ -2,17 +2,20 @@
 
 use std::collections::BTreeMap;
 
-use orderflow_domain::{MarketId, MarketSpec};
+use orderflow_domain::{Asset, MarketId, MarketSpec};
 
 use crate::{error::ApplicationError, market::MarketHandle};
 
-/// Maps each listed market to the actor that owns its book.
+/// Maps each listed market to the actor that owns its book, and keeps the
+/// list of assets those markets trade.
 ///
 /// Pattern: Registry. Built once at startup and shared read-only, so lookups
-/// need no locking. A `BTreeMap` keeps market listings in a stable order.
+/// need no locking. A `BTreeMap` keeps market listings in a stable order and
+/// lookups at O(log n), whatever the number of instruments.
 #[derive(Debug, Default)]
 pub struct MarketRegistry {
     markets: BTreeMap<MarketId, MarketHandle>,
+    assets: Vec<Asset>,
 }
 
 impl MarketRegistry {
@@ -21,7 +24,20 @@ impl MarketRegistry {
             .into_iter()
             .map(|handle| (handle.spec().id().clone(), handle))
             .collect();
-        Self { markets }
+        Self {
+            markets,
+            assets: Vec::new(),
+        }
+    }
+
+    /// Attaches the listed assets, for discovery endpoints.
+    pub fn with_assets(mut self, assets: impl IntoIterator<Item = Asset>) -> Self {
+        self.assets = assets.into_iter().collect();
+        self
+    }
+
+    pub fn assets(&self) -> &[Asset] {
+        &self.assets
     }
 
     pub fn get(&self, id: &MarketId) -> Result<&MarketHandle, ApplicationError> {

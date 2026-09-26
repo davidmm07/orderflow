@@ -63,7 +63,9 @@ pub fn router(state: AppState, config: &ApiConfig) -> Router {
         ));
 
     let public = Router::new()
+        .route("/v1/assets", get(markets::assets))
         .route("/v1/markets", get(markets::list))
+        .route("/v1/markets/{market}", get(markets::get))
         .route("/v1/markets/{market}/book", get(markets::book))
         .route("/health/live", get(ops::live))
         .route("/health/ready", get(ops::ready))

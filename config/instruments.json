@@ -1,0 +1,204 @@
+{
+  "assets": [
+    {
+      "code": "BTC",
+      "name": "Bitcoin",
+      "decimals": 8
+    },
+    {
+      "code": "ETH",
+      "name": "Ether",
+      "decimals": 8
+    },
+    {
+      "code": "SOL",
+      "name": "Solana",
+      "decimals": 8
+    },
+    {
+      "code": "XRP",
+      "name": "XRP",
+      "decimals": 6
+    },
+    {
+      "code": "ADA",
+      "name": "Cardano",
+      "decimals": 6
+    },
+    {
+      "code": "DOGE",
+      "name": "Dogecoin",
+      "decimals": 8
+    },
+    {
+      "code": "AVAX",
+      "name": "Avalanche",
+      "decimals": 8
+    },
+    {
+      "code": "LINK",
+      "name": "Chainlink",
+      "decimals": 8
+    },
+    {
+      "code": "LTC",
+      "name": "Litecoin",
+      "decimals": 8
+    },
+    {
+      "code": "DOT",
+      "name": "Polkadot",
+      "decimals": 8
+    },
+    {
+      "code": "USDC",
+      "name": "USD Coin",
+      "decimals": 6
+    },
+    {
+      "code": "USDT",
+      "name": "Tether",
+      "decimals": 6
+    },
+    {
+      "code": "USD",
+      "name": "US Dollar",
+      "decimals": 2
+    },
+    {
+      "code": "EUR",
+      "name": "Euro",
+      "decimals": 2
+    }
+  ],
+  "markets": [
+    {
+      "base": "BTC",
+      "quote": "USD",
+      "tick_size": "0.01",
+      "lot_size": "0.00001",
+      "min_quantity": "0.0001",
+      "max_quantity": "1000"
+    },
+    {
+      "base": "ETH",
+      "quote": "USD",
+      "tick_size": "0.01",
+      "lot_size": "0.0001",
+      "min_quantity": "0.001",
+      "max_quantity": "10000"
+    },
+    {
+      "base": "SOL",
+      "quote": "USD",
+      "tick_size": "0.001",
+      "lot_size": "0.01",
+      "min_quantity": "0.1",
+      "max_quantity": "100000"
+    },
+    {
+      "base": "XRP",
+      "quote": "USD",
+      "tick_size": "0.0001",
+      "lot_size": "0.1",
+      "min_quantity": "1",
+      "max_quantity": "10000000"
+    },
+    {
+      "base": "ADA",
+      "quote": "USD",
+      "tick_size": "0.0001",
+      "lot_size": "1",
+      "min_quantity": "1",
+      "max_quantity": "10000000"
+    },
+    {
+      "base": "DOGE",
+      "quote": "USD",
+      "tick_size": "0.00001",
+      "lot_size": "1",
+      "min_quantity": "10",
+      "max_quantity": "50000000"
+    },
+    {
+      "base": "AVAX",
+      "quote": "USD",
+      "tick_size": "0.001",
+      "lot_size": "0.01",
+      "min_quantity": "0.1",
+      "max_quantity": "500000"
+    },
+    {
+      "base": "LINK",
+      "quote": "USD",
+      "tick_size": "0.001",
+      "lot_size": "0.01",
+      "min_quantity": "0.1",
+      "max_quantity": "500000"
+    },
+    {
+      "base": "LTC",
+      "quote": "USD",
+      "tick_size": "0.01",
+      "lot_size": "0.001",
+      "min_quantity": "0.01",
+      "max_quantity": "100000"
+    },
+    {
+      "base": "DOT",
+      "quote": "USD",
+      "tick_size": "0.001",
+      "lot_size": "0.01",
+      "min_quantity": "0.1",
+      "max_quantity": "1000000"
+    },
+    {
+      "base": "BTC",
+      "quote": "EUR",
+      "tick_size": "0.01",
+      "lot_size": "0.00001",
+      "min_quantity": "0.0001",
+      "max_quantity": "1000"
+    },
+    {
+      "base": "ETH",
+      "quote": "EUR",
+      "tick_size": "0.01",
+      "lot_size": "0.0001",
+      "min_quantity": "0.001",
+      "max_quantity": "10000"
+    },
+    {
+      "base": "BTC",
+      "quote": "USDC",
+      "tick_size": "0.01",
+      "lot_size": "0.00001",
+      "min_quantity": "0.0001",
+      "max_quantity": "1000"
+    },
+    {
+      "base": "ETH",
+      "quote": "USDC",
+      "tick_size": "0.01",
+      "lot_size": "0.0001",
+      "min_quantity": "0.001",
+      "max_quantity": "10000"
+    },
+    {
+      "base": "ETH",
+      "quote": "BTC",
+      "tick_size": "0.00001",
+      "lot_size": "0.0001",
+      "min_quantity": "0.001",
+      "max_quantity": "10000"
+    },
+    {
+      "base": "USDT",
+      "quote": "USD",
+      "tick_size": "0.0001",
+      "lot_size": "0.01",
+      "min_quantity": "1",
+      "max_quantity": "10000000"
+    }
+  ]
+}

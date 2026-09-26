@@ -19,7 +19,9 @@
 // float arithmetic in the domain is treated as a bug.
 #![deny(clippy::float_arithmetic)]
 
+mod asset;
 mod book;
+mod catalog;
 mod engine;
 mod error;
 mod events;
@@ -32,7 +34,9 @@ mod property_tests;
 mod stops;
 mod time;
 
+pub use asset::{Asset, AssetCode};
 pub use book::{BookSnapshot, LevelView, OrderBook};
+pub use catalog::InstrumentCatalog;
 pub use engine::{CancelOutcome, MatchOutcome, MatchingEngine};
 pub use error::DomainError;
 pub use events::{DomainEvent, EventPayload, Trade};

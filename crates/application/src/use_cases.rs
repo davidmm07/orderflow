@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use orderflow_domain::{
-    AccountId, BookSnapshot, DomainError, MarketId, MarketSpec, Order, OrderId,
+    AccountId, Asset, BookSnapshot, DomainError, MarketId, MarketSpec, Order, OrderId,
 };
 
 use crate::{
@@ -183,6 +183,10 @@ impl OrderQueries {
 
     pub fn markets(&self) -> Vec<MarketSpec> {
         self.registry.specs().cloned().collect()
+    }
+
+    pub fn assets(&self) -> Vec<Asset> {
+        self.registry.assets().to_vec()
     }
 
     pub fn market(&self, id: &MarketId) -> Result<MarketSpec, ApplicationError> {
