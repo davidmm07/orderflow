@@ -1,0 +1,10 @@
+# Keep the build context small and free of secrets.
+target/
+.git/
+.github/
+.env
+.env.*
+*.pem
+*.key
+secrets/
+docs/
