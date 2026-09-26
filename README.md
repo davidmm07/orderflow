@@ -447,9 +447,10 @@ In the Postman desktop app (v12 or later):
    `postman/environments/orderflow-local.environment.yaml` from your
    `.env`. The file holds secrets and is git-ignored.
 2. In Postman, open **Files**, **Open folder**, and pick the repository
-   root, the folder that contains `postman/` and `.postman/`. Picking the
-   `postman/` folder itself makes Postman nest a second `postman/` inside
-   it.
+   root, the folder that contains `postman/` and `Cargo.toml`. Picking
+   the `postman/` folder itself makes Postman nest a second `postman/`
+   inside it. Postman then writes its workspace binding to `.postman/`,
+   which stays local and git-ignored.
 3. Switch to **Local View**, select the `Orderflow local` environment, start
    the server, and run a folder or the whole collection with the
    Collection Runner.
@@ -497,7 +498,6 @@ docs/adr/           architecture decision records
 docs/openapi.yaml   API contract
 docs/errors.md      error catalog
 postman/            scenario flows (Collection v3 YAML), environment template
-.postman/           Postman Native Git settings
 scripts/            env bootstrap, Postman env writer, signed request helper
 ```
 

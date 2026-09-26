@@ -21,3 +21,6 @@ secrets/
 
 # Postman environments generated from .env contain secrets
 postman/environments/*local.environment.yaml
+
+# Postman writes each developer's own cloud workspace binding here
+.postman/

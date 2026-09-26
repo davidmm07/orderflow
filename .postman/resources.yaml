@@ -1,8 +1,0 @@
-# Postman Native Git configuration, read by the Postman app (v12 and later)
-# when this repository folder is opened in Local View.
-#
-# Everything under postman/ (collections, environments, globals) is registered
-# automatically. workspace.id binds the folder to a Postman Cloud workspace;
-# it stays empty so the public repository is not tied to anyone's account.
-workspace:
-  id: ""

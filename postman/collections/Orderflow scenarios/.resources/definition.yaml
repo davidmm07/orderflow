@@ -6,46 +6,54 @@ description: |-
 
   Private requests are signed by the collection pre-request script. Each flow uses its own market and cancels what it leaves behind, so flows can run again on the same server.
 variables:
-  run_id: ''
+  run_id: ""
+  link_stop_buy_id: ""
+  ltc_bid_id: ""
+  eth_ask_id: ""
+  sol_ask_id: ""
+  avax_ask_id: ""
+  avax_b_bid_id: ""
+  avax_a_bid_id: ""
+  btc_idem_id: ""
 scripts:
-- type: http:beforeRequest
-  code: |-
-    // Signs private requests with HMAC-SHA256, the same way the server checks them:
-    // hex(HMAC_SHA256(secret, timestamp + METHOD + path_and_query + body)).
-    // A request is private when it has an x-orderflow-key header. Tests of the
-    // auth failures preset x-orderflow-timestamp or x-orderflow-signature, and
-    // this script keeps whatever they preset.
-    const keyHeader = pm.request.headers.get('x-orderflow-key');
-    if (keyHeader) {
-        const required = ['trader_a_key', 'trader_a_secret', 'trader_b_key', 'trader_b_secret'];
-        const missing = required.filter(function (name) { return !pm.variables.get(name); });
-        if (missing.length > 0) {
-            throw new Error('Environment is missing ' + missing.join(', ') +
-                '. Run "make postman-env" and select the "Orderflow local" environment.');
-        }
-        const key = pm.variables.replaceIn(keyHeader);
-        const secrets = {};
-        secrets[pm.variables.get('trader_a_key')] = pm.variables.get('trader_a_secret');
-        secrets[pm.variables.get('trader_b_key')] = pm.variables.get('trader_b_secret');
-        const secret = secrets[key] || '';
-        if (!secret) {
-            console.warn('No secret for key ' + key + '; the request goes out with an invalid signature.');
-        }
-        const preset = pm.request.headers.get('x-orderflow-timestamp');
-        const timestamp = preset ? pm.variables.replaceIn(preset) : String(Math.floor(Date.now() / 1000));
-        const path = pm.variables.replaceIn(pm.request.url.getPathWithQuery());
-        const body = pm.request.body && pm.request.body.raw ? pm.variables.replaceIn(pm.request.body.raw) : '';
-        const signature = CryptoJS.HmacSHA256(timestamp + pm.request.method + path + body, secret)
-            .toString(CryptoJS.enc.Hex);
-        pm.request.headers.upsert({ key: 'x-orderflow-timestamp', value: timestamp });
-        if (!pm.request.headers.get('x-orderflow-signature')) {
-            pm.request.headers.upsert({ key: 'x-orderflow-signature', value: signature });
-        }
-    }
-  language: text/javascript
-- type: http:afterResponse
-  code: |-
-    pm.test('response carries a request id', function () {
-        pm.expect(pm.response.headers.has('x-request-id')).to.be.true;
-    });
-  language: text/javascript
+  - type: http:beforeRequest
+    code: |-
+      // Signs private requests with HMAC-SHA256, the same way the server checks them:
+      // hex(HMAC_SHA256(secret, timestamp + METHOD + path_and_query + body)).
+      // A request is private when it has an x-orderflow-key header. Tests of the
+      // auth failures preset x-orderflow-timestamp or x-orderflow-signature, and
+      // this script keeps whatever they preset.
+      const keyHeader = pm.request.headers.get('x-orderflow-key');
+      if (keyHeader) {
+          const required = ['trader_a_key', 'trader_a_secret', 'trader_b_key', 'trader_b_secret'];
+          const missing = required.filter(function (name) { return !pm.variables.get(name); });
+          if (missing.length > 0) {
+              throw new Error('Environment is missing ' + missing.join(', ') +
+                  '. Run "make postman-env" and select the "Orderflow local" environment.');
+          }
+          const key = pm.variables.replaceIn(keyHeader);
+          const secrets = {};
+          secrets[pm.variables.get('trader_a_key')] = pm.variables.get('trader_a_secret');
+          secrets[pm.variables.get('trader_b_key')] = pm.variables.get('trader_b_secret');
+          const secret = secrets[key] || '';
+          if (!secret) {
+              console.warn('No secret for key ' + key + '; the request goes out with an invalid signature.');
+          }
+          const preset = pm.request.headers.get('x-orderflow-timestamp');
+          const timestamp = preset ? pm.variables.replaceIn(preset) : String(Math.floor(Date.now() / 1000));
+          const path = pm.variables.replaceIn(pm.request.url.getPathWithQuery());
+          const body = pm.request.body && pm.request.body.raw ? pm.variables.replaceIn(pm.request.body.raw) : '';
+          const signature = CryptoJS.HmacSHA256(timestamp + pm.request.method + path + body, secret)
+              .toString(CryptoJS.enc.Hex);
+          pm.request.headers.upsert({ key: 'x-orderflow-timestamp', value: timestamp });
+          if (!pm.request.headers.get('x-orderflow-signature')) {
+              pm.request.headers.upsert({ key: 'x-orderflow-signature', value: signature });
+          }
+      }
+    language: text/javascript
+  - type: http:afterResponse
+    code: |-
+      pm.test('response carries a request id', function () {
+          pm.expect(pm.response.headers.has('x-request-id')).to.be.true;
+      });
+    language: text/javascript

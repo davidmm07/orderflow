@@ -200,9 +200,10 @@ make postman-env
 ### In the Postman desktop app (v12 or later)
 
 1. Open **Files**, click **Open folder** and choose the repository root:
-   the folder that contains `postman/`, `.postman/` and `Cargo.toml`. Do
-   not choose `postman/` itself; Postman would create a second `postman/`
-   inside it.
+   the folder that contains `postman/` and `Cargo.toml`. Do not choose
+   `postman/` itself; Postman would create a second `postman/` inside it.
+   Postman records your own cloud workspace in `.postman/resources.yaml`;
+   that folder is git-ignored so nobody's workspace id is published.
 2. Switch to **Local View**. The `Orderflow scenarios` collection and the
    `Orderflow local` and `Orderflow template` environments appear on their
    own; nothing needs importing.
