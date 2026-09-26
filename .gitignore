@@ -1,0 +1,20 @@
+# Build output
+/target/
+
+# Environment files hold secrets and must never be committed.
+# Only the placeholder template is tracked.
+.env
+.env.*
+!.env.example
+
+# Key material
+*.pem
+*.key
+*.p12
+secrets/
+
+# Editors and OS files
+.idea/
+.vscode/
+*.swp
+.DS_Store
