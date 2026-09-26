@@ -9,8 +9,8 @@ fix that before moving on, because later steps depend on it.
 - This file covers how to work on it: setting up, running, reading the
   code, changing it and shipping.
 
-Plan one working day for steps 1 to 10 and a second day for the guided
-change in step 11.
+Plan one working day for steps 1 to 11 and a second day for the guided
+change in step 12.
 
 ---
 
@@ -45,7 +45,7 @@ Keep three design rules in mind while you read the code:
 | Rust | 1.98.1, pinned in `rust-toolchain.toml` | Build and tests |
 | C toolchain (`gcc`, `make`) | any | Only for `--features kafka`, which compiles librdkafka from source |
 | openssl, curl | any | `make env` and the request helper script |
-| Docker with Compose v2 | any recent | Only for the Kafka stack in step 7 |
+| Docker with Compose v2 | any recent | Only for the Kafka stack in step 8 |
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -72,7 +72,7 @@ clippy and rustfmt, so everyone on the team uses the same compiler.
 make test
 ```
 
-After the first build, six suites with 82 tests should pass in well under a
+After the first build, six suites with 103 tests should pass in well under a
 minute:
 
 | Suite | Where | What it checks |
@@ -97,8 +97,10 @@ make ci
 ## Step 3. Run the server and place your first order
 
 Create your local configuration. This copies `.env.example` to `.env` and
-fills in a newly generated API secret. `.env` is git-ignored. Do not commit
-it, and do not paste its contents into tickets or chats.
+fills in two traders, `trader-a` and `trader-b`, each with a newly
+generated API secret. Two accounts are needed to see trades, because an
+account never trades with itself. `.env` is git-ignored. Do not commit it,
+and do not paste its contents into tickets or chats.
 
 ```bash
 make env
@@ -121,8 +123,8 @@ curl -s localhost:8080/v1/markets
 ```
 
 Place a resting sell order. The helper script signs the request with the
-key from `.env`. The first call compiles a small signing tool, which takes
-a few seconds.
+first key in `.env` (trader A). The first call compiles a small signing
+tool, which takes a few seconds.
 
 ```bash
 scripts/signed-request.sh POST /v1/markets/BTC-USD/orders '{"side":"sell","type":"limit","price":"64000.50","quantity":"0.5","client_order_id":"my-first-order"}'
@@ -142,11 +144,14 @@ scripts/signed-request.sh POST /v1/markets/BTC-USD/orders '{"side":"buy","type":
 ```
 
 It comes back `cancelled` with `cancel_reason: self_trade_prevention`
-because both orders belong to the same account, and an account may not
-trade with itself. To see a real trade, add a second credential to
-`ORDERFLOW_API_CREDENTIALS` in `.env` (entries are comma separated),
-restart the server, and send the buy with `ORDERFLOW_KEY_ID` and
-`ORDERFLOW_SECRET` set to the second key.
+because both orders belong to trader A, and an account may not trade with
+itself. Send the same buy as trader B, the second entry in `.env`:
+
+```bash
+ORDERFLOW_CREDENTIAL=2 scripts/signed-request.sh POST /v1/markets/BTC-USD/orders '{"side":"buy","type":"market","quantity":"0.2"}'
+```
+
+This time the order is `filled` at `64000.5`, and `fills` shows the trade.
 
 Finally, send an invalid order and read the error:
 
@@ -157,12 +162,74 @@ scripts/signed-request.sh POST /v1/markets/BTC-USD/orders '{"side":"up","type":"
 A single `422` response lists every invalid field. The codes are described
 in [docs/errors.md](docs/errors.md).
 
-> Checkpoint: you have seen a `201`, a self-trade cancel, a `422` with
-> several field errors, and your order in the book.
+> Checkpoint: you have seen a `201`, a self-trade cancel, a trade between
+> two accounts, a `422` with several field errors, and your order in the
+> book.
 
 ---
 
-## Step 4. Understand the architecture
+## Step 4. Run the scenario flows
+
+The `postman/` folder holds a Postman collection with eight scenario flows.
+Each flow is a folder of requests that runs top to bottom, checks every
+response and passes ids from one request to the next. It is the fastest way
+to see the whole API working, and CI runs the same flows on every push.
+
+| Flow | Market | What it shows |
+|---|---|---|
+| 01 Discovery and health | all | Probes, assets, market filters, one market, book, metrics |
+| 02 Limit order lifecycle | LTC-USD | Place, read, owner-only access, cancel, cancel twice |
+| 03 Matching and partial fills | ETH-USD | Partial fill at the maker price, market order, last price |
+| 04 Time in force | SOL-USD | IOC, FOK in both outcomes, market order with no liquidity |
+| 05 Post-only and self-trade prevention | AVAX-USD | Post-only rejection, `cancel_newest`, `cancel_oldest` |
+| 06 Stop orders | LINK-USD | Pending stops, a passed stop rejected, buy and sell stops firing, cancel |
+| 07 Idempotent retries | BTC-USD | Replay with the same key, key reuse, malformed key |
+| 08 Authentication and validation errors | BTC-USD | 401, 404, 405 and 422 problem documents |
+
+Write the Postman environment from your `.env`. The file holds your
+secrets; it is git-ignored and must not be shared.
+
+```bash
+make postman-env
+```
+
+With the server from step 3 running, run every flow from the terminal. The
+target uses `npx newman`, or the `postman/newman` Docker image when Node is
+not installed.
+
+```bash
+make flows
+```
+
+To run a single flow:
+
+```bash
+make flows FLOW="06 Stop orders"
+```
+
+To use the Postman app instead, import
+`postman/orderflow.postman_collection.json` and
+`postman/local.postman_environment.json`, select the environment, and run a
+folder with the Collection Runner. The collection's pre-request script
+signs every private request, so you never compute a signature by hand.
+
+Each flow uses its own market and cancels what it leaves on the book, so
+the flows can run again on the same server. If a run stops halfway,
+restart the server to start from empty books.
+
+If `make postman-env` reports a single trader, your `.env` predates the
+flows. Add a second trader and restart the server:
+
+```bash
+scripts/bootstrap-env.sh --add-trader
+```
+
+> Checkpoint: `make flows` reports 0 failed requests and 0 failed
+> assertions.
+
+---
+
+## Step 5. Understand the architecture
 
 Read [ADR 0001](docs/adr/0001-clean-architecture-over-layered.md), which
 explains why the project uses clean architecture instead of layers. Then
@@ -198,7 +265,7 @@ The domain sees none of them; it receives a `Timestamp` argument.
 
 ---
 
-## Step 5. Follow one order through the code
+## Step 6. Follow one order through the code
 
 Open these files side by side and trace a `POST /v1/markets/BTC-USD/orders`
 from the socket to Kafka. This walk-through covers most of what you need to
@@ -229,7 +296,7 @@ this table.
 
 ---
 
-## Step 6. The matching engine
+## Step 7. The matching engine
 
 Files: [`book.rs`](crates/domain/src/book.rs),
 [`engine.rs`](crates/domain/src/engine.rs),
@@ -258,6 +325,17 @@ Algorithm (price-time priority):
 7. Remainder: `gtc` orders rest on the book, `ioc` and market orders are
    cancelled.
 
+Stop orders (`stop_limit`, `stop_market`) live in a separate `StopBook` in
+[`stops.rs`](crates/domain/src/stops.rs) and are not visible in the book.
+A buy stop fires when a trade prints at or above its stop price, a sell
+stop at or below. After every submission the engine runs
+`run_stop_cascade`: it fires every reached stop, lowest buy stop and
+highest sell stop first, and matches it like a new order. A fired stop can
+trade and move the price, which can fire more stops, so the loop repeats
+until none is reached. A stop the market has already passed is rejected
+with `stop_would_trigger_immediately`, so no stop can wait forever by
+mistake.
+
 `OrderBook::assert_consistent` runs after every step of every property
 test and checks the invariants: no empty levels, level totals equal to the
 sum of remaining quantities, no terminal order on the book, and a book
@@ -277,7 +355,7 @@ cargo test -p orderflow-domain engine
 
 ---
 
-## Step 7. Events and Kafka
+## Step 8. Events and Kafka
 
 Read [ADR 0003](docs/adr/0003-event-delivery-and-durability.md). Stop the
 server from step 3, because the stack uses the same port 8080, and start
@@ -319,7 +397,7 @@ make down
 
 ---
 
-## Step 8. Security model
+## Step 9. Security model
 
 | Threat | Control | Where |
 |---|---|---|
@@ -345,7 +423,7 @@ text in a 5xx `detail`.
 
 ---
 
-## Step 9. Validation and errors
+## Step 10. Validation and errors
 
 Validation has four layers, described under "Data validation" in the
 README: strict serde, the request validator that collects every field
@@ -366,7 +444,7 @@ tests checks the status, content type, `code` and `type` in one call.
 
 ---
 
-## Step 10. Observability and operations
+## Step 11. Observability and operations
 
 Logs are JSON in production. Every line of a request includes its
 `request_id`, which the client also receives as `x-request-id`. When a user
@@ -399,7 +477,7 @@ Runbook:
 
 ---
 
-## Step 11. Guided first change
+## Step 12. Guided first change
 
 Add a minimum notional rule: for each market, `price * quantity` of an
 order must be at least `min_notional`. The change touches every ring.
@@ -419,20 +497,22 @@ order must be at least `min_notional`. The change touches every ring.
    it is reported together with the other field errors. Add `min_notional`
    to `MarketView` in [`dto.rs`](crates/api/src/dto.rs).
 5. Config. Accept `min_notional` in `MarketEntry` in
-   [`config.rs`](crates/server/src/config.rs) and add it to
-   [`config/markets.json`](config/markets.json).
-6. Tests. Add an HTTP test with `assert_problem` and keep the server test
-   that loads the bundled market file passing.
+   [`instruments.rs`](crates/server/src/instruments.rs) and add it to the
+   markets that need it in
+   [`config/instruments.json`](config/instruments.json).
+6. Tests. Add an HTTP test with `assert_problem`, keep the server test
+   `bundled_catalog_is_valid` passing, and extend a Postman flow if clients
+   can see the rule.
 7. Docs. Add a row to [docs/errors.md](docs/errors.md) and the field to
    [docs/openapi.yaml](docs/openapi.yaml).
-8. Ship. Run `make ci`, commit following step 12 and open a pull request.
+8. Ship. Run `make ci`, commit following step 13 and open a pull request.
 
 > Checkpoint: `make ci` passes and a reviewer can follow your commits one
 > ring at a time.
 
 ---
 
-## Step 12. Team conventions
+## Step 13. Team conventions
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org):
 
@@ -444,7 +524,7 @@ At most two short lines of body, only when the subject needs context.
 
 - Types: `feat`, `fix`, `refactor`, `perf`, `test`, `docs`, `build`, `ci`,
   `chore`. Scopes: `domain`, `application`, `infrastructure`, `api`,
-  `server`.
+  `server`, `postman`.
 - Keep the description brief.
 
 Code rules:
@@ -488,7 +568,9 @@ Pull request checklist:
 | Task | Location |
 |---|---|
 | Change a matching rule | `crates/domain/src/engine.rs`, with a property test in mind |
-| Add a market parameter | `crates/domain/src/market.rs` and `crates/server/src/config.rs` |
+| List a new instrument | Add the asset (if new) and the market to `config/instruments.json`, then restart; see ADR 0004 |
+| Add a market parameter | `crates/domain/src/market.rs` and `crates/server/src/instruments.rs` |
+| Add a scenario flow | Postman app, then export over `postman/orderflow.postman_collection.json` and check it with `make flows` |
 | Add an endpoint | `crates/api/src/router.rs`, a handler, DTOs, then `docs/openapi.yaml` |
 | Add an event sink | Implement `EventPublisher` in the infrastructure crate and select it in `crates/server/src/app.rs` |
 | Replace in-memory storage | Implement `OrderRepository` and `IdempotencyStore` and wire them in `app.rs`; nothing else changes |
@@ -500,12 +582,13 @@ Pull request checklist:
 - [ ] Step 1: toolchain installed, repository cloned
 - [ ] Step 2: `make ci` passes
 - [ ] Step 3: first order placed, errors read
-- [ ] Step 4: ADR 0001 read, `Clock` exercise done
-- [ ] Step 5: one order traced through all 13 rows
-- [ ] Step 6: engine test written
-- [ ] Step 7: events consumed from Kafka
-- [ ] Step 8: security model explained to your onboarding buddy
-- [ ] Step 9: validation and error layers understood
-- [ ] Step 10: metrics and runbook reviewed
-- [ ] Step 11: minimum notional change merged
-- [ ] Step 12: conventions understood
+- [ ] Step 4: every scenario flow passes
+- [ ] Step 5: ADR 0001 read, `Clock` exercise done
+- [ ] Step 6: one order traced through all 13 rows
+- [ ] Step 7: engine test written
+- [ ] Step 8: events consumed from Kafka
+- [ ] Step 9: security model explained to your onboarding buddy
+- [ ] Step 10: validation and error layers understood
+- [ ] Step 11: metrics and runbook reviewed
+- [ ] Step 12: minimum notional change merged
+- [ ] Step 13: conventions understood

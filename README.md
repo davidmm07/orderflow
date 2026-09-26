@@ -12,10 +12,22 @@ If you are new to the codebase, follow [KT_README.MD](KT_README.MD) first.
 ## Features
 
 Matching
-- Limit and market orders with `gtc`, `ioc` and `fok` time in force.
+- Limit, market, stop-limit and stop-market orders, with `gtc`, `ioc` and
+  `fok` time in force.
+- Stop orders wait outside the book and fire when the last trade price
+  reaches them. A fired stop can move the price and fire further stops;
+  the whole cascade settles within the request that caused it.
 - Post-only orders and self-trade prevention (`cancel_newest`,
   `cancel_oldest`).
 - Exact decimal arithmetic. The domain crate denies float arithmetic.
+
+Instruments
+- 16 markets over 14 assets out of the box: USD, EUR and stablecoin
+  quotes plus an ETH-BTC cross.
+- Listing another instrument is an edit to `config/instruments.json`. The
+  catalog is validated as a whole at startup.
+- Clients discover what is listed through `/v1/assets` and
+  `/v1/markets?base=&quote=`.
 
 API
 - Versioned REST under `/v1` with HMAC-SHA256 signed requests.
@@ -48,14 +60,30 @@ make env
 make run
 ```
 
-In a second terminal:
+`make env` creates two traders, A and B, because an account never trades
+with itself. In a second terminal:
 
 ```bash
 scripts/signed-request.sh POST /v1/markets/BTC-USD/orders '{"side":"sell","type":"limit","price":"64000.50","quantity":"0.5"}'
 ```
 
 ```bash
+ORDERFLOW_CREDENTIAL=2 scripts/signed-request.sh POST /v1/markets/BTC-USD/orders '{"side":"buy","type":"market","quantity":"0.2"}'
+```
+
+```bash
 curl -s localhost:8080/v1/markets/BTC-USD/book
+```
+
+To run every scenario flow against the running server (see
+[Scenario flows](#scenario-flows-postman)):
+
+```bash
+make postman-env
+```
+
+```bash
+make flows
 ```
 
 To run the container image against Kafka (Redpanda):
@@ -202,7 +230,7 @@ doc comment of each type says which one it follows.
 | Builder | [`MarketSpecBuilder`](crates/domain/src/market.rs) | Validates a whole market configuration at once |
 | Value Object / Newtype | [`numeric.rs`](crates/domain/src/numeric.rs), [`ids.rs`](crates/domain/src/ids.rs) | Invalid prices and ids cannot be represented |
 | Null Object | [`NoopMetrics`](crates/application/src/ports.rs) | Removes `Option<Metrics>` checks from the runtime |
-| Registry | [`registry.rs`](crates/application/src/registry.rs) | Read-only map from market to its actor |
+| Registry | [`registry.rs`](crates/application/src/registry.rs), [`catalog.rs`](crates/domain/src/catalog.rs) | Read-only map from market to its actor; validated list of instruments |
 | Adapter | [`extract.rs`](crates/api/src/extract.rs) | Axum extractors that reject with problem documents |
 | Chain of Responsibility | [`router.rs`](crates/api/src/router.rs) | Middleware stack with one concern per layer |
 | Data Transfer Object | [`dto.rs`](crates/api/src/dto.rs), [`wire.rs`](crates/infrastructure/src/events/wire.rs) | Public contracts kept separate from the domain model |
@@ -212,16 +240,53 @@ doc comment of each type says which one it follows.
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| GET | `/v1/markets` | public | Markets with their tick, lot and size limits |
-| GET | `/v1/markets/{market}/book?depth=N` | public | Aggregated book, best price first, with its sequence number |
+| GET | `/v1/assets` | public | Listed assets with their precision |
+| GET | `/v1/markets?base=&quote=` | public | Markets with their tick, lot and size limits, optionally filtered by asset |
+| GET | `/v1/markets/{market}` | public | One market |
+| GET | `/v1/markets/{market}/book?depth=N` | public | Aggregated book, best price first, with its sequence number and last trade price |
 | POST | `/v1/markets/{market}/orders` | signed | Place an order; supports `Idempotency-Key` |
 | GET | `/v1/markets/{market}/orders/{id}` | signed | Read one of your orders |
-| DELETE | `/v1/markets/{market}/orders/{id}` | signed | Cancel one of your resting orders |
+| DELETE | `/v1/markets/{market}/orders/{id}` | signed | Cancel one of your resting or pending orders |
 | GET | `/health/live`, `/health/ready` | public | Probes |
 | GET | `/metrics` | public | Prometheus text format |
 
 The full contract is in [docs/openapi.yaml](docs/openapi.yaml) and the
 error codes are in [docs/errors.md](docs/errors.md).
+
+### Order types
+
+| `type` | Required fields | Behavior |
+|---|---|---|
+| `limit` | `price` | Matches up to `price`; the rest follows `time_in_force` (`gtc` rests, `ioc` and `fok` never do) |
+| `market` | none beyond `side` and `quantity` | Matches at the best prices; any rest is cancelled |
+| `stop_limit` | `stop_price`, `price` | Waits as `pending` until a trade reaches `stop_price`, then acts as a limit order |
+| `stop_market` | `stop_price` | Waits as `pending` until a trade reaches `stop_price`, then acts as a market order |
+
+A buy stop fires when a trade prints at or above its stop price, and a sell
+stop at or below. A stop the market has already reached is rejected with
+`409 stop_would_trigger_immediately`. Pending stops can be cancelled and
+never show in the public book. Fills in a placement response carry
+`liquidity`: `taker` for matches on arrival, `maker` when a stop fired by
+the same request traded against the order.
+
+### Instruments
+
+The catalog in [`config/instruments.json`](config/instruments.json) has two
+lists: assets (code, name, decimals) and markets (base, quote, tick size,
+lot size, quantity limits). To list a new instrument:
+
+1. Add the asset to `assets` if it is not there yet.
+2. Add the market to `markets`, referencing the base and quote codes.
+3. Run `cargo test -p orderflow-server`; `bundled_catalog_is_valid` loads
+   the file with the same rules as the server.
+4. Deploy. The server starts one engine per market.
+
+The loader rejects unknown assets, duplicates, a market whose base and
+quote are the same, and lot sizes with more decimals than the base asset
+supports, and it lists every problem in one message.
+[ADR 0004](docs/adr/0004-instrument-catalog-as-data.md) covers how the
+design scales further: listing without a restart and sharding markets
+across nodes.
 
 Some API design choices:
 
@@ -336,19 +401,51 @@ Matching benchmark (`make bench`, Criterion, release build, AMD Ryzen 7
 
 ## Testing
 
-`make test` runs 82 tests, all offline:
+`make test` runs 103 tests, all offline:
 
 | Suite | Count | What it covers |
 |---|---|---|
-| Domain unit tests | 28 | Matching rules, value objects, market specs |
-| Domain property tests | 2 x 256 cases | Random order flow keeps every book invariant; matching is deterministic |
+| Domain unit tests | 41 | Matching rules, stop orders and cascades, value objects, the instrument catalog |
+| Domain property tests | 2 x 256 cases | Random order flow, stops included, keeps every book invariant; matching is deterministic |
 | Application tests | 7 | Use cases with hand written fakes, idempotency, load shedding |
 | Infrastructure tests | 11 | TTLs and caps with paused time, retry policy, wire schema, metrics |
-| API unit and HTTP tests | 13 + 15 | Signing, validation, rate limits, timeouts, and the full router end to end |
-| Server tests | 6 | Config parsing, secret redaction, bundled market file |
+| API unit and HTTP tests | 15 + 18 | Signing, validation, stop orders, discovery, rate limits, timeouts, the full router end to end |
+| Server tests | 9 | Config parsing, secret redaction, instrument catalog loading |
+
+Set `PROPTEST_CASES` for longer property runs; 20,000 cases take about two
+seconds in release mode.
 
 `make ci` runs the same checks as the pipeline: formatting, clippy with
-warnings as errors, and the tests.
+warnings as errors, and the tests. CI also starts the server and runs the
+scenario flows below.
+
+## Scenario flows (Postman)
+
+[`postman/orderflow.postman_collection.json`](postman/orderflow.postman_collection.json)
+holds eight scenario flows with 77 requests and 226 assertions. Each flow
+is a folder that runs top to bottom, checks every response and passes ids
+to the next request. A collection pre-request script signs private
+requests, so nobody computes signatures by hand.
+
+| Flow | Market | Covers |
+|---|---|---|
+| 01 Discovery and health | all | Probes, assets, market filters, one market, book, metrics |
+| 02 Limit order lifecycle | LTC-USD | Place, read, owner-only access, cancel, cancel twice |
+| 03 Matching and partial fills | ETH-USD | Partial fill at the maker price, market order, last price |
+| 04 Time in force | SOL-USD | IOC, FOK in both outcomes, market order with no liquidity |
+| 05 Post-only and self-trade prevention | AVAX-USD | Post-only rejection, `cancel_newest`, `cancel_oldest` |
+| 06 Stop orders | LINK-USD | Pending stops, a passed stop rejected, buy and sell stops firing, cancel |
+| 07 Idempotent retries | BTC-USD | Replay with the same key, key reuse, malformed key |
+| 08 Authentication and validation errors | BTC-USD | 401, 404, 405 and 422 problem documents |
+
+`make postman-env` writes `postman/local.postman_environment.json` from
+`.env`. That file holds secrets and is git-ignored; the tracked
+`postman/orderflow.postman_environment.json` is an empty template for
+manual setup. Then either import both files into Postman and use the
+Collection Runner, or run `make flows` (all flows) or
+`make flows FLOW="06 Stop orders"` (one flow). Each flow uses its own
+market and cleans up after itself, so the flows can run again and again
+on the same server.
 
 ## Configuration
 
@@ -359,7 +456,7 @@ lists them with their defaults. The main ones:
 |---|---|---|
 | `ORDERFLOW_API_CREDENTIALS` | required | `key_id:account_id:secret` entries, comma separated |
 | `ORDERFLOW_BIND_ADDR` | `127.0.0.1:8080` | Listen address |
-| `ORDERFLOW_MARKETS_FILE` | `config/markets.json` | Market definitions |
+| `ORDERFLOW_INSTRUMENTS_FILE` | `config/instruments.json` | Assets and markets to list |
 | `ORDERFLOW_EVENT_SINK` | `log` | `log` or `kafka` (build with `--features kafka`) |
 | `ORDERFLOW_KAFKA_BROKERS` | none | Required when the sink is `kafka` |
 | `ORDERFLOW_RATE_LIMIT_PER_SEC` / `_BURST` | `50` / `100` | Per-account token bucket |
@@ -379,11 +476,12 @@ crates/
   infrastructure/   adapters, feature "kafka" for rdkafka
   api/              HTTP layer (plus examples/sign.rs)
   server/           the `orderflow` binary
-config/markets.json market definitions
+config/instruments.json  assets and markets
 docs/adr/           architecture decision records
 docs/openapi.yaml   API contract
 docs/errors.md      error catalog
-scripts/            env bootstrap and signed request helper
+postman/            scenario flows and an environment template
+scripts/            env bootstrap, Postman env writer, signed request helper
 ```
 
 ## Commit convention
@@ -397,6 +495,8 @@ Commits follow [Conventional Commits](https://www.conventionalcommits.org):
   snapshots, which the deterministic engine supports (see ADR 0003).
 - It runs on a single node. Markets are already the shard key, but
   spreading them across nodes needs a routing layer.
+- Listing or delisting an instrument needs a restart (ADR 0004 describes
+  the path to listing without one).
 - There is no streaming market data feed yet. `BroadcastPublisher` is the
   starting point for a WebSocket feed.
 - Prices use `Decimal`. Integer ticks would make book comparisons cheaper,
