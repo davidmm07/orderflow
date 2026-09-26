@@ -1,0 +1,32 @@
+# Supply chain policy, enforced in CI with `cargo deny check`.
+
+[graph]
+all-features = true
+
+[advisories]
+# Any RustSec advisory (vulnerable, unmaintained or yanked) fails the build.
+yanked = "deny"
+
+[licenses]
+# Permissive licenses only. Anything else needs a review before it is added.
+allow = [
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "MIT",
+    "Unicode-3.0",
+]
+confidence-threshold = 0.9
+
+[licenses.private]
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# Internal crates reference each other by path and are never published.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
