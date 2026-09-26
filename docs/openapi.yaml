@@ -67,7 +67,7 @@ paths:
     post:
       tags: [Orders]
       operationId: placeOrder
-      summary: Place a limit or market order.
+      summary: Place a limit, market, stop-limit or stop-market order.
       security:
         - apiKey: []
           timestamp: []
@@ -92,9 +92,16 @@ paths:
                 value: { side: buy, type: limit, price: "64000.50", quantity: "0.25", client_order_id: my-order-1 }
               market:
                 value: { side: sell, type: market, quantity: "0.1" }
+              stop_limit:
+                value: { side: sell, type: stop_limit, stop_price: "62000", price: "61950", quantity: "0.25" }
+              stop_market:
+                value: { side: buy, type: stop_market, stop_price: "66000", quantity: "0.1" }
       responses:
         "201":
-          description: Order accepted. It may already be filled or cancelled.
+          description: |
+            Order accepted. It may already be filled or cancelled. Stop
+            orders come back as `pending` until a trade reaches their stop
+            price.
           headers:
             Location:
               schema: { type: string }
@@ -141,7 +148,7 @@ paths:
     delete:
       tags: [Orders]
       operationId: cancelOrder
-      summary: Cancel one of your resting orders.
+      summary: Cancel one of your resting or pending orders.
       security:
         - apiKey: []
           timestamp: []
@@ -247,20 +254,27 @@ components:
       required: [side, type, quantity]
       properties:
         side: { type: string, enum: [buy, sell] }
-        type: { type: string, enum: [limit, market] }
+        type: { type: string, enum: [limit, market, stop_limit, stop_market] }
         price:
           allOf: [{ $ref: "#/components/schemas/Decimal" }]
-          description: Required for limit orders. Market orders must omit it.
+          description: Required for limit and stop_limit orders. Market and stop_market orders must omit it.
+        stop_price:
+          allOf: [{ $ref: "#/components/schemas/Decimal" }]
+          description: |
+            Required for stop_limit and stop_market orders, rejected for the
+            others. A buy stop fires when a trade prints at or above it, a
+            sell stop when a trade prints at or below it. A stop the market
+            has already reached is rejected with 409.
         quantity: { $ref: "#/components/schemas/Decimal" }
         time_in_force:
           type: string
           enum: [gtc, ioc, fok]
           default: gtc
-          description: Limit orders only.
+          description: Limit and stop_limit orders only.
         post_only:
           type: boolean
           default: false
-          description: Limit orders with gtc only. Rejected if it would trade on arrival.
+          description: Limit orders with gtc only, never stop orders. Rejected if it would trade on arrival.
         client_order_id:
           type: string
           pattern: "^[A-Za-z0-9_-]{1,36}$"
@@ -277,15 +291,16 @@ components:
         client_order_id: { type: [string, "null"] }
         market: { type: string }
         side: { type: string, enum: [buy, sell] }
-        type: { type: string, enum: [limit, market] }
+        type: { type: string, enum: [limit, market, stop_limit, stop_market] }
         price: { type: [string, "null"] }
+        stop_price: { type: [string, "null"] }
         time_in_force: { type: [string, "null"], enum: [gtc, ioc, fok, null] }
         post_only: { type: boolean }
         self_trade_prevention: { type: string, enum: [cancel_newest, cancel_oldest] }
         quantity: { $ref: "#/components/schemas/Decimal" }
         filled_quantity: { $ref: "#/components/schemas/Decimal" }
         remaining_quantity: { $ref: "#/components/schemas/Decimal" }
-        status: { type: string, enum: [open, partially_filled, filled, cancelled] }
+        status: { type: string, enum: [pending, open, partially_filled, filled, cancelled] }
         cancel_reason:
           type: [string, "null"]
           enum: [requested, immediate_or_cancel, fill_or_kill, no_liquidity, self_trade_prevention, null]
@@ -294,12 +309,16 @@ components:
 
     Fill:
       type: object
-      required: [trade_id, price, quantity, maker_order_id, executed_at]
+      required: [trade_id, price, quantity, liquidity, counterparty_order_id, executed_at]
       properties:
         trade_id: { type: integer, description: Per market sequence. }
         price: { $ref: "#/components/schemas/Decimal" }
         quantity: { $ref: "#/components/schemas/Decimal" }
-        maker_order_id: { type: string, format: uuid }
+        liquidity:
+          type: string
+          enum: [taker, maker]
+          description: maker when a stop order fired by the same request traded against this order.
+        counterparty_order_id: { type: string, format: uuid }
         executed_at: { type: string, format: date-time }
 
     PlaceOrderResponse:
@@ -337,6 +356,9 @@ components:
       properties:
         market: { type: string }
         sequence: { type: integer, description: Last event applied before the snapshot. }
+        last_price:
+          type: [string, "null"]
+          description: Price of the most recent trade, which stop orders watch.
         bids:
           type: array
           items: { $ref: "#/components/schemas/Level" }

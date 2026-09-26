@@ -8,7 +8,7 @@
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use orderflow_application::OrderReceipt;
-use orderflow_domain::{BookSnapshot, LevelView, MarketSpec, Order, Timestamp, Trade};
+use orderflow_domain::{BookSnapshot, LevelView, MarketSpec, Order, OrderId, Timestamp, Trade};
 use serde::{Deserialize, Serialize};
 
 /// Body of `POST /v1/markets/{market}/orders`.
@@ -24,6 +24,7 @@ pub struct PlaceOrderRequest {
     pub order_type: Option<String>,
     pub price: Option<String>,
     pub quantity: Option<String>,
+    pub stop_price: Option<String>,
     pub time_in_force: Option<String>,
     pub post_only: Option<bool>,
     pub client_order_id: Option<String>,
@@ -45,6 +46,7 @@ pub struct OrderView {
     #[serde(rename = "type")]
     pub order_type: &'static str,
     pub price: Option<String>,
+    pub stop_price: Option<String>,
     pub time_in_force: Option<&'static str>,
     pub post_only: bool,
     pub self_trade_prevention: &'static str,
@@ -65,8 +67,9 @@ impl From<&Order> for OrderView {
             client_order_id: order.client_order_id().map(|id| id.as_str().to_owned()),
             market: order.market().to_string(),
             side: order.side().as_str(),
-            order_type: kind.as_str(),
+            order_type: order.type_name(),
             price: kind.limit_price().map(|price| price.to_string()),
+            stop_price: order.stop_price().map(|price| price.to_string()),
             time_in_force: kind.time_in_force().map(|tif| tif.as_str()),
             post_only: kind.is_post_only(),
             self_trade_prevention: order.self_trade_prevention().as_str(),
@@ -87,17 +90,26 @@ pub struct FillView {
     pub trade_id: u64,
     pub price: String,
     pub quantity: String,
-    pub maker_order_id: String,
+    /// `taker` when the order matched on arrival, `maker` when it rested and
+    /// a stop order fired by the same request traded against it.
+    pub liquidity: &'static str,
+    pub counterparty_order_id: String,
     pub executed_at: String,
 }
 
-impl From<&Trade> for FillView {
-    fn from(trade: &Trade) -> Self {
+impl FillView {
+    fn new(trade: &Trade, order: OrderId) -> Self {
+        let (liquidity, counterparty) = if trade.taker_order_id == order {
+            ("taker", trade.maker_order_id)
+        } else {
+            ("maker", trade.taker_order_id)
+        };
         Self {
             trade_id: trade.id.value(),
             price: trade.price.to_string(),
             quantity: trade.quantity.to_string(),
-            maker_order_id: trade.maker_order_id.to_string(),
+            liquidity,
+            counterparty_order_id: counterparty.to_string(),
             executed_at: rfc3339(trade.executed_at),
         }
     }
@@ -113,7 +125,11 @@ impl From<&OrderReceipt> for PlaceOrderResponse {
     fn from(receipt: &OrderReceipt) -> Self {
         Self {
             order: OrderView::from(&receipt.order),
-            fills: receipt.trades.iter().map(FillView::from).collect(),
+            fills: receipt
+                .trades
+                .iter()
+                .map(|trade| FillView::new(trade, receipt.order.id()))
+                .collect(),
         }
     }
 }
@@ -169,6 +185,7 @@ impl From<&LevelView> for LevelDto {
 pub struct BookView {
     pub market: String,
     pub sequence: u64,
+    pub last_price: Option<String>,
     pub bids: Vec<LevelDto>,
     pub asks: Vec<LevelDto>,
 }
@@ -178,6 +195,7 @@ impl From<&BookSnapshot> for BookView {
         Self {
             market: book.market.to_string(),
             sequence: book.sequence,
+            last_price: book.last_price.map(|price| price.to_string()),
             bids: book.bids.iter().map(LevelDto::from).collect(),
             asks: book.asks.iter().map(LevelDto::from).collect(),
         }

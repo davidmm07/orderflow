@@ -104,10 +104,22 @@ impl Collector {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum OrderType {
     Limit,
     Market,
+    StopLimit,
+    StopMarket,
+}
+
+impl OrderType {
+    fn is_stop(self) -> bool {
+        matches!(self, Self::StopLimit | Self::StopMarket)
+    }
+
+    fn has_limit_price(self) -> bool {
+        matches!(self, Self::Limit | Self::StopLimit)
+    }
 }
 
 impl PlaceOrderRequest {
@@ -126,14 +138,39 @@ impl PlaceOrderRequest {
         let quantity = c.required("quantity", self.quantity.as_deref(), parse_quantity);
         let quantity = c.rule("quantity", quantity, |q| spec.check_quantity(*q));
 
+        let stop_price = match order_type {
+            Some(kind) if kind.is_stop() => {
+                let stop = c.required("stop_price", self.stop_price.as_deref(), parse_price);
+                c.rule("stop_price", stop, |p| spec.check_price(*p))
+            }
+            Some(_) => {
+                c.forbid(
+                    "stop_price",
+                    self.stop_price.is_some(),
+                    "only stop_limit and stop_market orders take a stop price",
+                );
+                None
+            }
+            None => None,
+        };
+
         let kind = match order_type {
-            Some(OrderType::Limit) => {
+            Some(kind) if kind.has_limit_price() => {
                 let price = c.required("price", self.price.as_deref(), parse_price);
                 let price = c.rule("price", price, |p| spec.check_price(*p));
                 let time_in_force = c
                     .optional("time_in_force", self.time_in_force.as_deref(), parse_tif)
                     .unwrap_or(TimeInForce::GoodTilCancelled);
-                let post_only = self.post_only.unwrap_or(false);
+                let post_only = if kind.is_stop() {
+                    c.forbid(
+                        "post_only",
+                        self.post_only == Some(true),
+                        "stop orders cannot be post-only",
+                    );
+                    false
+                } else {
+                    self.post_only.unwrap_or(false)
+                };
                 price.and_then(
                     |price| match OrderKind::limit(price, time_in_force, post_only) {
                         Ok(kind) => Some(kind),
@@ -144,7 +181,7 @@ impl PlaceOrderRequest {
                     },
                 )
             }
-            Some(OrderType::Market) => {
+            Some(_) => {
                 c.forbid("price", self.price.is_some(), "market orders take no price");
                 c.forbid(
                     "time_in_force",
@@ -181,6 +218,7 @@ impl PlaceOrderRequest {
                     side,
                     kind,
                     quantity,
+                    stop_price,
                     client_order_id,
                     self_trade_prevention,
                 })
@@ -202,9 +240,11 @@ fn parse_order_type(raw: &str) -> Result<OrderType, Invalid> {
     match raw {
         "limit" => Ok(OrderType::Limit),
         "market" => Ok(OrderType::Market),
+        "stop_limit" => Ok(OrderType::StopLimit),
+        "stop_market" => Ok(OrderType::StopMarket),
         _ => Err(Invalid::new(
             "invalid_enum",
-            "must be one of: limit, market",
+            "must be one of: limit, market, stop_limit, stop_market",
         )),
     }
 }
@@ -273,6 +313,7 @@ mod tests {
             order_type: Some("limit".into()),
             price: Some("100.25".into()),
             quantity: Some("0.5".into()),
+            stop_price: None,
             time_in_force: None,
             post_only: None,
             client_order_id: None,
@@ -317,6 +358,40 @@ mod tests {
     }
 
     #[test]
+    fn stop_orders_need_a_stop_price_and_other_orders_reject_one() {
+        let mut stop = request();
+        stop.order_type = Some("stop_limit".into());
+        assert_eq!(
+            fields(stop.into_command(account(), &spec())),
+            ["stop_price"]
+        );
+
+        let mut limit = request();
+        limit.stop_price = Some("99".into());
+        assert_eq!(
+            fields(limit.into_command(account(), &spec())),
+            ["stop_price"]
+        );
+
+        let mut stop_market = request();
+        stop_market.order_type = Some("stop_market".into());
+        stop_market.price = None;
+        stop_market.stop_price = Some("99.5".into());
+        let command = stop_market.into_command(account(), &spec()).unwrap();
+        assert_eq!(command.kind, OrderKind::Market);
+        assert!(command.stop_price.is_some());
+    }
+
+    #[test]
+    fn stop_limit_orders_cannot_be_post_only() {
+        let mut req = request();
+        req.order_type = Some("stop_limit".into());
+        req.stop_price = Some("101".into());
+        req.post_only = Some(true);
+        assert_eq!(fields(req.into_command(account(), &spec())), ["post_only"]);
+    }
+
+    #[test]
     fn rejects_non_plain_decimals() {
         for raw in ["-1", "1e3", " 1", "1,5", "+2", "", "0x10", "1.2.3"] {
             assert!(parse_decimal(raw).is_err(), "{raw:?} should be rejected");
@@ -343,6 +418,7 @@ mod tests {
             order_type: None,
             price: None,
             quantity: None,
+            stop_price: None,
             time_in_force: None,
             post_only: None,
             client_order_id: None,

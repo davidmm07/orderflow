@@ -29,6 +29,7 @@ mod numeric;
 mod order;
 #[cfg(test)]
 mod property_tests;
+mod stops;
 mod time;
 
 pub use book::{BookSnapshot, LevelView, OrderBook};

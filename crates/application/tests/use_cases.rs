@@ -188,6 +188,7 @@ fn limit(account_name: &str, side: Side, price: u32, quantity: u32) -> PlaceOrde
         )
         .unwrap(),
         quantity: Quantity::positive(quantity.into()).unwrap(),
+        stop_price: None,
         client_order_id: None,
         self_trade_prevention: SelfTradePrevention::CancelNewest,
     }

@@ -20,6 +20,7 @@ enum Op {
         tif: u8,
         post_only: bool,
         cancel_oldest: bool,
+        stop_ticks: Option<u32>,
     },
     Cancel {
         account: u8,
@@ -37,9 +38,10 @@ fn op() -> impl Strategy<Value = Op> {
         0u8..3,
         prop::bool::weighted(0.1),
         any::<bool>(),
+        prop::option::weighted(0.2, 95u32..=105),
     )
         .prop_map(
-            |(account, buy, market, price_ticks, lots, tif, post_only, cancel_oldest)| Op::Submit {
+            |(
                 account,
                 buy,
                 market,
@@ -48,6 +50,19 @@ fn op() -> impl Strategy<Value = Op> {
                 tif,
                 post_only,
                 cancel_oldest,
+                stop_ticks,
+            )| {
+                Op::Submit {
+                    account,
+                    buy,
+                    market,
+                    price_ticks,
+                    lots,
+                    tif,
+                    post_only,
+                    cancel_oldest,
+                    stop_ticks,
+                }
             },
         );
     let cancel = (0u8..3, any::<usize>()).prop_map(|(account, pick)| Op::Cancel { account, pick });
@@ -94,6 +109,7 @@ fn run(ops: &[Op]) -> Vec<Step> {
                 tif,
                 post_only,
                 cancel_oldest,
+                stop_ticks,
             } => {
                 let price = Price::new(Decimal::from(*price_ticks)).unwrap();
                 let tif = [
@@ -121,6 +137,7 @@ fn run(ops: &[Op]) -> Vec<Step> {
                     side: if *buy { Side::Buy } else { Side::Sell },
                     kind,
                     quantity: Quantity::positive(Decimal::from(*lots)).unwrap(),
+                    stop_price: stop_ticks.map(|ticks| Price::new(Decimal::from(ticks)).unwrap()),
                     client_order_id: None,
                     self_trade_prevention: if *cancel_oldest {
                         SelfTradePrevention::CancelOldest
@@ -147,19 +164,21 @@ fn run(ops: &[Op]) -> Vec<Step> {
                         assert_eq!(outcome.event.sequence, last_sequence + 1);
                         last_sequence = outcome.event.sequence;
                         assert!(engine.book().get(id).is_none());
+                        assert!(engine.pending_stop(id).is_none());
                     }
                     Step::Cancelled(result)
                 }
             }
         };
         engine.book().assert_consistent();
+        engine.stops_assert_consistent();
         steps.push(step);
     }
     steps
 }
 
 fn check_outcome(engine: &MatchingEngine, outcome: &MatchOutcome, last_sequence: &mut u64) {
-    let taker = &outcome.order;
+    let order = &outcome.order;
 
     for event in &outcome.events {
         assert_eq!(event.sequence, *last_sequence + 1, "sequence gap");
@@ -173,42 +192,65 @@ fn check_outcome(engine: &MatchingEngine, outcome: &MatchOutcome, last_sequence:
             trade.maker_account, trade.taker_account,
             "self trade executed"
         );
-        if let Some(limit) = taker.limit_price() {
-            match taker.side() {
-                Side::Buy => assert!(trade.price <= limit),
-                Side::Sell => assert!(trade.price >= limit),
+        let as_taker = trade.taker_order_id == order.id();
+        assert!(
+            as_taker || trade.maker_order_id == order.id(),
+            "foreign trade reported"
+        );
+        if let Some(limit) = order.limit_price() {
+            match (as_taker, order.side()) {
+                (true, Side::Buy) => assert!(trade.price <= limit),
+                (true, Side::Sell) => assert!(trade.price >= limit),
+                (false, _) => assert_eq!(trade.price, limit, "makers trade at their own price"),
             }
         }
         traded = traded.checked_add(trade.quantity).unwrap();
     }
     assert_eq!(
         traded,
-        taker.filled(),
-        "taker fills must equal trade volume"
+        order.filled(),
+        "fills must equal reported trade volume"
     );
 
-    let resting = engine.book().get(taker.id()).is_some();
-    let should_rest = matches!(
-        taker.status(),
-        OrderStatus::Open | OrderStatus::PartiallyFilled
-    );
-    assert_eq!(resting, should_rest, "resting state disagrees with status");
+    let mut ids = std::collections::HashSet::new();
+    for changed in outcome.changed_orders() {
+        assert!(ids.insert(changed.id()), "an order is reported twice");
+        let resting = engine.book().get(changed.id()).is_some();
+        let pending = engine.pending_stop(changed.id()).is_some();
+        let status = changed.status();
+        assert_eq!(
+            resting,
+            matches!(status, OrderStatus::Open | OrderStatus::PartiallyFilled)
+        );
+        assert_eq!(pending, status == OrderStatus::Pending);
+        if changed.kind() == OrderKind::Market {
+            assert!(!resting, "market orders never rest");
+        }
+    }
 
-    match taker.kind() {
-        OrderKind::Market => assert!(!resting, "market orders never rest"),
+    match order.kind() {
         OrderKind::Limit {
             time_in_force: TimeInForce::FillOrKill,
             ..
-        } => assert!(taker.filled().is_zero() || taker.status() == OrderStatus::Filled),
+        } if order.stop_price().is_none() => {
+            assert!(order.filled().is_zero() || order.status() == OrderStatus::Filled)
+        }
         OrderKind::Limit {
             post_only: true, ..
-        } => assert!(outcome.trades.is_empty()),
-        OrderKind::Limit { .. } => {}
+        } => assert!(
+            outcome
+                .trades
+                .iter()
+                .all(|t| t.taker_order_id != order.id()),
+            "post-only orders never take liquidity"
+        ),
+        _ => {}
     }
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(256))]
+    // 256 cases by default; set PROPTEST_CASES for longer runs.
+    #![proptest_config(ProptestConfig::default())]
 
     #[test]
     fn random_order_flow_preserves_book_invariants(ops in prop::collection::vec(op(), 1..200)) {

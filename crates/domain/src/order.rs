@@ -139,6 +139,8 @@ impl OrderKind {
 pub enum OrderStatus {
     /// Accepted and about to be matched. Only seen in `OrderAccepted` events.
     New,
+    /// Stop order waiting for the last trade price to reach its stop price.
+    Pending,
     /// Resting on the book with nothing filled.
     Open,
     /// Resting on the book with part of the quantity filled.
@@ -155,6 +157,7 @@ impl OrderStatus {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::New => "new",
+            Self::Pending => "pending",
             Self::Open => "open",
             Self::PartiallyFilled => "partially_filled",
             Self::Filled => "filled",
@@ -196,6 +199,9 @@ impl CancelReason {
 }
 
 /// A validated request to place an order, ready for the matching engine.
+///
+/// `stop_price` turns the order into a stop order: it waits outside the
+/// book until a trade reaches the stop price, then executes as `kind`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewOrder {
     pub id: OrderId,
@@ -204,6 +210,7 @@ pub struct NewOrder {
     pub side: Side,
     pub kind: OrderKind,
     pub quantity: Quantity,
+    pub stop_price: Option<Price>,
     pub client_order_id: Option<ClientOrderId>,
     pub self_trade_prevention: SelfTradePrevention,
 }
@@ -220,6 +227,7 @@ pub struct Order {
     side: Side,
     kind: OrderKind,
     quantity: Quantity,
+    stop_price: Option<Price>,
     filled: Quantity,
     status: OrderStatus,
     cancel_reason: Option<CancelReason>,
@@ -231,6 +239,11 @@ pub struct Order {
 
 impl Order {
     pub(crate) fn accept(new: NewOrder, now: Timestamp) -> Self {
+        let status = if new.stop_price.is_some() {
+            OrderStatus::Pending
+        } else {
+            OrderStatus::New
+        };
         Self {
             id: new.id,
             account: new.account,
@@ -238,8 +251,9 @@ impl Order {
             side: new.side,
             kind: new.kind,
             quantity: new.quantity,
+            stop_price: new.stop_price,
             filled: Quantity::ZERO,
-            status: OrderStatus::New,
+            status,
             cancel_reason: None,
             client_order_id: new.client_order_id,
             self_trade_prevention: new.self_trade_prevention,
@@ -274,6 +288,22 @@ impl Order {
 
     pub fn quantity(&self) -> Quantity {
         self.quantity
+    }
+
+    /// Trigger price of a stop order, kept after the stop has fired.
+    pub fn stop_price(&self) -> Option<Price> {
+        self.stop_price
+    }
+
+    /// Public name of the order type: `limit`, `market`, `stop_limit` or
+    /// `stop_market`.
+    pub fn type_name(&self) -> &'static str {
+        match (self.stop_price.is_some(), self.kind) {
+            (false, OrderKind::Limit { .. }) => "limit",
+            (false, OrderKind::Market) => "market",
+            (true, OrderKind::Limit { .. }) => "stop_limit",
+            (true, OrderKind::Market) => "stop_market",
+        }
     }
 
     pub fn filled(&self) -> Quantity {
@@ -326,6 +356,14 @@ impl Order {
         };
         self.updated_at = now;
         Ok(())
+    }
+
+    /// Activates a pending stop order so it can be matched like any other.
+    pub(crate) fn trigger(&mut self, now: Timestamp) {
+        if self.status == OrderStatus::Pending {
+            self.status = OrderStatus::New;
+            self.updated_at = now;
+        }
     }
 
     /// Marks an order as resting. Partial fills keep their status.

@@ -1,7 +1,7 @@
 //! Inputs and outputs of the use cases.
 
 use orderflow_domain::{
-    AccountId, ClientOrderId, MarketId, NewOrder, Order, OrderId, OrderKind, Quantity,
+    AccountId, ClientOrderId, MarketId, NewOrder, Order, OrderId, OrderKind, Price, Quantity,
     SelfTradePrevention, Side, Trade,
 };
 
@@ -19,6 +19,8 @@ pub struct PlaceOrderCommand {
     pub side: Side,
     pub kind: OrderKind,
     pub quantity: Quantity,
+    /// Set for stop orders: the last trade price that activates the order.
+    pub stop_price: Option<Price>,
     pub client_order_id: Option<ClientOrderId>,
     pub self_trade_prevention: SelfTradePrevention,
 }
@@ -32,6 +34,7 @@ impl PlaceOrderCommand {
             side: self.side,
             kind: self.kind,
             quantity: self.quantity,
+            stop_price: self.stop_price,
             client_order_id: self.client_order_id,
             self_trade_prevention: self.self_trade_prevention,
         }
@@ -49,6 +52,7 @@ pub struct CancelOrderCommand {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OrderReceipt {
     pub order: Order,
+    /// Trades the order took part in during the request, as taker or maker.
     pub trades: Vec<Trade>,
 }
 

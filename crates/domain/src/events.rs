@@ -47,6 +47,14 @@ pub enum EventPayload {
         reason: CancelReason,
         remaining: Quantity,
     },
+    /// A stop order reached its trigger and is about to be matched.
+    StopTriggered {
+        order_id: OrderId,
+        account: AccountId,
+        stop_price: Price,
+        /// Last trade price that fired the stop.
+        trigger_price: Price,
+    },
 }
 
 impl EventPayload {
@@ -56,6 +64,7 @@ impl EventPayload {
             Self::OrderAccepted(_) => "order_accepted",
             Self::TradeExecuted(_) => "trade_executed",
             Self::OrderCancelled { .. } => "order_cancelled",
+            Self::StopTriggered { .. } => "stop_triggered",
         }
     }
 }

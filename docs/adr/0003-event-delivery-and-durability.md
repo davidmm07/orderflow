@@ -19,7 +19,10 @@ They need to know what is guaranteed about ordering, duplicates and loss.
   partition, so every consumer sees each market's events in sequence order.
 - The producer runs with `enable.idempotence=true` and `acks=all`.
 - The wire format is an explicit, versioned JSON schema (`schema_version`),
-  mapped by hand from the domain types. Decimals are strings.
+  mapped by hand from the domain types. Decimals are strings. Additive
+  changes keep the version: `stop_triggered` events and the optional
+  `stop_price` field were added under version 1, so consumers must skip
+  event types and fields they do not know.
 - Transient errors are retried with exponential backoff and full jitter.
   Permanent errors, such as authorization failures or an unknown topic,
   are reported without retrying.

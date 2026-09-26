@@ -109,6 +109,7 @@ mod tests {
             side: Side::Buy,
             kind: OrderKind::Market,
             quantity: Quantity::positive(Decimal::from(quantity)).unwrap(),
+            stop_price: None,
             client_order_id: None,
             self_trade_prevention: SelfTradePrevention::CancelNewest,
         }

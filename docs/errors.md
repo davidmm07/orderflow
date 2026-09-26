@@ -38,6 +38,7 @@ server log, next to the request id.
 | 405 | `method_not_allowed` | Route exists, method does not | Fix the method |
 | 409 | `order_not_open` | Cancel on an order that already filled or was cancelled | Read the order to see its final state |
 | 409 | `post_only_would_cross` | A post-only order would have traded on arrival | Reprice or drop `post_only` |
+| 409 | `stop_would_trigger_immediately` | The last trade price has already reached the stop price | Read `last_price` from the book and choose a stop beyond it, or send a normal order |
 | 409 | `idempotency_key_in_flight` | Same key is still being processed | Retry after `Retry-After` |
 | 413 | `payload_too_large` | Body exceeds `ORDERFLOW_MAX_BODY_BYTES` | Send a smaller body |
 | 415 | `unsupported_media_type` | Missing `content-type: application/json` | Set the header |
@@ -59,14 +60,16 @@ server log, next to the request id.
 | any | `required` | The field is missing |
 | any | `not_allowed` | The field is not valid for this order type, for example `price` on a market order |
 | `side`, `type`, `time_in_force`, `self_trade_prevention` | `invalid_enum` | Value is not one of the listed options |
-| `price`, `quantity` | `invalid_decimal` | Not a plain decimal string such as `"101.25"` (signs, exponents and spaces are rejected) |
-| `price` | `non_positive_price` | Zero |
-| `price` | `price_not_on_tick` | Not a multiple of the market's `tick_size` |
+| `price`, `stop_price`, `quantity` | `invalid_decimal` | Not a plain decimal string such as `"101.25"` (signs, exponents and spaces are rejected) |
+| `price`, `stop_price` | `non_positive_price` | Zero |
+| `price`, `stop_price` | `price_not_on_tick` | Not a multiple of the market's `tick_size` |
 | `quantity` | `non_positive_quantity` | Zero |
 | `quantity` | `quantity_not_on_lot` | Not a multiple of the market's `lot_size` |
 | `quantity` | `quantity_below_minimum` | Below `min_quantity` |
 | `quantity` | `quantity_above_maximum` | Above `max_quantity` |
 | `post_only` | `post_only_requires_gtc` | `post_only` combined with `ioc` or `fok` |
+| `post_only` | `not_allowed` | `post_only` on a stop order |
+| `stop_price` | `required` / `not_allowed` | Missing on a stop order, or present on a limit or market order |
 | `client_order_id` | `invalid_client_order_id` | Not 1 to 36 characters of letters, digits, `-` or `_` |
 | `Idempotency-Key` | `invalid_idempotency_key` | Not 1 to 64 visible ASCII characters |
 | `depth` | `out_of_range` | Book depth outside 1 to 100 |

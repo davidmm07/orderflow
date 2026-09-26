@@ -3,7 +3,9 @@
 //! The domain event types may change shape over time. Consumers only see
 //! this explicit schema, mapped field by field, so a refactor inside the
 //! domain cannot break a downstream service unless this file changes too.
-//! Breaking changes bump `SCHEMA_VERSION`.
+//! Breaking changes bump `SCHEMA_VERSION`. Additive changes, such as a new
+//! optional field or a new event type, keep it, so consumers must skip
+//! fields and event types they do not know.
 
 use orderflow_domain::{DomainEvent, EventPayload, Order, Trade};
 use serde::{Deserialize, Serialize};
@@ -33,6 +35,7 @@ pub enum EventBody {
     OrderAccepted(OrderRecord),
     TradeExecuted(TradeRecord),
     OrderCancelled(CancelRecord),
+    StopTriggered(StopRecord),
 }
 
 impl EventBody {
@@ -41,6 +44,7 @@ impl EventBody {
             Self::OrderAccepted(_) => "order_accepted",
             Self::TradeExecuted(_) => "trade_executed",
             Self::OrderCancelled(_) => "order_cancelled",
+            Self::StopTriggered(_) => "stop_triggered",
         }
     }
 }
@@ -53,6 +57,7 @@ pub struct OrderRecord {
     pub side: String,
     pub order_type: String,
     pub price: Option<String>,
+    pub stop_price: Option<String>,
     pub time_in_force: Option<String>,
     pub post_only: bool,
     pub quantity: String,
@@ -69,6 +74,14 @@ pub struct TradeRecord {
     pub taker_order_id: String,
     pub maker_account_id: String,
     pub taker_account_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StopRecord {
+    pub order_id: String,
+    pub account_id: String,
+    pub stop_price: String,
+    pub trigger_price: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,6 +108,17 @@ impl From<&DomainEvent> for EventRecord {
                 reason: reason.as_str().to_owned(),
                 remaining_quantity: remaining.to_string(),
             }),
+            EventPayload::StopTriggered {
+                order_id,
+                account,
+                stop_price,
+                trigger_price,
+            } => EventBody::StopTriggered(StopRecord {
+                order_id: order_id.to_string(),
+                account_id: account.to_string(),
+                stop_price: stop_price.to_string(),
+                trigger_price: trigger_price.to_string(),
+            }),
         };
         Self {
             schema_version: SCHEMA_VERSION,
@@ -114,8 +138,9 @@ fn order_record(order: &Order) -> OrderRecord {
         account_id: order.account().to_string(),
         client_order_id: order.client_order_id().map(|id| id.as_str().to_owned()),
         side: order.side().as_str().to_owned(),
-        order_type: kind.as_str().to_owned(),
+        order_type: order.type_name().to_owned(),
         price: kind.limit_price().map(|price| price.to_string()),
+        stop_price: order.stop_price().map(|price| price.to_string()),
         time_in_force: kind.time_in_force().map(|tif| tif.as_str().to_owned()),
         post_only: kind.is_post_only(),
         quantity: order.quantity().to_string(),

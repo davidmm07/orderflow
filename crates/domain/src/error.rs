@@ -40,6 +40,15 @@ pub enum DomainError {
     PostOnlyRequiresGtc,
     #[error("post-only order would take liquidity from the book")]
     PostOnlyWouldCross,
+    #[error("stop orders cannot be post-only")]
+    StopOrderPostOnly,
+    #[error(
+        "stop price {stop_price} would trigger immediately at the last trade price {last_price}"
+    )]
+    StopWouldTriggerImmediately {
+        stop_price: Price,
+        last_price: Price,
+    },
     #[error("order targets market {actual} but this engine serves {expected}")]
     MarketMismatch {
         expected: MarketId,
@@ -77,6 +86,8 @@ impl DomainError {
             Self::QuantityAboveMaximum { .. } => "quantity_above_maximum",
             Self::PostOnlyRequiresGtc => "post_only_requires_gtc",
             Self::PostOnlyWouldCross => "post_only_would_cross",
+            Self::StopOrderPostOnly => "stop_order_post_only",
+            Self::StopWouldTriggerImmediately { .. } => "stop_would_trigger_immediately",
             Self::MarketMismatch { .. } => "market_mismatch",
             Self::DuplicateOrderId(_) => "duplicate_order_id",
             Self::OrderNotFound(_) => "order_not_found",

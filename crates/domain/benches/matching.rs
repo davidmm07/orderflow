@@ -33,6 +33,7 @@ fn order(n: u128, side: Side, price: u32, quantity: u32, account: &AccountId) ->
         )
         .unwrap_or_else(|_| unreachable!()),
         quantity: Quantity::positive(Decimal::from(quantity)).unwrap_or_else(|_| unreachable!()),
+        stop_price: None,
         client_order_id: None,
         self_trade_prevention: SelfTradePrevention::CancelNewest,
     }

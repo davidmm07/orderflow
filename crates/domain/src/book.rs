@@ -32,6 +32,8 @@ pub struct BookSnapshot {
     pub market: MarketId,
     /// Sequence of the last event applied before the snapshot was taken.
     pub sequence: u64,
+    /// Price of the most recent trade, `None` before the first one.
+    pub last_price: Option<Price>,
     /// Best (highest) bid first.
     pub bids: Vec<LevelView>,
     /// Best (lowest) ask first.

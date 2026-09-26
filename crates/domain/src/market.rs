@@ -149,6 +149,9 @@ impl MarketSpec {
         if let Some(price) = order.kind.limit_price() {
             self.check_price(price)?;
         }
+        if let Some(stop_price) = order.stop_price {
+            self.check_price(stop_price)?;
+        }
         self.check_quantity(order.quantity)
     }
 }

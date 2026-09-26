@@ -546,6 +546,88 @@ async fn metrics_expose_engine_counters() {
     );
 }
 
+#[tokio::test]
+async fn stop_orders_wait_until_a_trade_reaches_their_stop_price() {
+    let app = app();
+    send(
+        &app,
+        ALICE.request("POST", ORDERS, Some(limit("sell", "100", "1"))),
+    )
+    .await;
+    send(
+        &app,
+        BOB.request("POST", ORDERS, Some(limit("buy", "100", "1"))),
+    )
+    .await;
+
+    let stop =
+        json!({ "side": "buy", "type": "stop_market", "stop_price": "101", "quantity": "0.5" });
+    let placed = send(&app, BOB.request("POST", ORDERS, Some(stop))).await;
+    assert_eq!(placed.status, StatusCode::CREATED, "{}", placed.body);
+    assert_eq!(placed.body["order"]["status"], "pending");
+    assert_eq!(placed.body["order"]["type"], "stop_market");
+    assert_eq!(placed.body["order"]["stop_price"], "101");
+    let stop_path = format!("{ORDERS}/{}", placed.body["order"]["id"].as_str().unwrap());
+
+    let book = send(&app, get("/v1/markets/BTC-USD/book")).await;
+    assert_eq!(book.body["last_price"], "100");
+    assert!(
+        book.body["bids"].as_array().unwrap().is_empty(),
+        "stops stay out of the book"
+    );
+
+    let already_passed =
+        json!({ "side": "sell", "type": "stop_market", "stop_price": "101", "quantity": "1" });
+    let rejected = send(&app, ALICE.request("POST", ORDERS, Some(already_passed))).await;
+    assert_problem(
+        &rejected,
+        StatusCode::CONFLICT,
+        "stop_would_trigger_immediately",
+    );
+
+    send(
+        &app,
+        ALICE.request("POST", ORDERS, Some(limit("sell", "101", "2"))),
+    )
+    .await;
+    let trigger = send(
+        &app,
+        BOB.request("POST", ORDERS, Some(limit("buy", "101", "0.5"))),
+    )
+    .await;
+    assert_eq!(trigger.body["fills"][0]["liquidity"], "taker");
+
+    let fired = send(&app, BOB.request("GET", &stop_path, None)).await;
+    assert_eq!(fired.body["status"], "filled");
+    assert_eq!(fired.body["filled_quantity"], "0.5");
+    let book = send(&app, get("/v1/markets/BTC-USD/book")).await;
+    assert_eq!(book.body["asks"][0]["quantity"], "1");
+}
+
+#[tokio::test]
+async fn stop_fields_are_validated() {
+    let app = app();
+    let missing_stop =
+        json!({ "side": "buy", "type": "stop_limit", "price": "100", "quantity": "1" });
+    let reply = send(&app, ALICE.request("POST", ORDERS, Some(missing_stop))).await;
+    assert_problem(
+        &reply,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "validation_failed",
+    );
+    assert_eq!(error_fields(&reply), ["stop_price"]);
+
+    let stop_on_limit = json!({ "side": "buy", "type": "limit", "price": "100", "stop_price": "99", "quantity": "1" });
+    let reply = send(&app, ALICE.request("POST", ORDERS, Some(stop_on_limit))).await;
+    assert_eq!(error_fields(&reply), ["stop_price"]);
+
+    let pending = json!({ "side": "sell", "type": "stop_limit", "stop_price": "90", "price": "89", "quantity": "1" });
+    let placed = send(&app, ALICE.request("POST", ORDERS, Some(pending))).await;
+    let path = format!("{ORDERS}/{}", placed.body["order"]["id"].as_str().unwrap());
+    let cancelled = send(&app, ALICE.request("DELETE", &path, None)).await;
+    assert_eq!(cancelled.body["status"], "cancelled");
+}
+
 fn uuid_like() -> &'static str {
     "01890a5d-ac96-774b-bcce-b302099a8057"
 }

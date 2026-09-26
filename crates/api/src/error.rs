@@ -261,13 +261,21 @@ impl From<DomainError> for ApiError {
             | DomainError::QuantityNotOnLot { .. }
             | DomainError::QuantityBelowMinimum { .. }
             | DomainError::QuantityAboveMaximum { .. } => field("quantity", &error),
-            DomainError::PostOnlyRequiresGtc => field("post_only", &error),
+            DomainError::PostOnlyRequiresGtc | DomainError::StopOrderPostOnly => {
+                field("post_only", &error)
+            }
             DomainError::InvalidClientOrderId => field("client_order_id", &error),
             DomainError::PostOnlyWouldCross => Self::new(
                 StatusCode::CONFLICT,
                 "post_only_would_cross",
                 "Order would take liquidity",
                 "A post-only order must not match on arrival; it was rejected.",
+            ),
+            DomainError::StopWouldTriggerImmediately { .. } => Self::new(
+                StatusCode::CONFLICT,
+                "stop_would_trigger_immediately",
+                "Stop would trigger immediately",
+                format!("{error}. Choose a stop price the market has not reached yet."),
             ),
             DomainError::InvalidMarketId => Self::new(
                 StatusCode::NOT_FOUND,

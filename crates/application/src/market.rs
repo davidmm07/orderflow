@@ -3,7 +3,8 @@
 use std::{sync::Arc, time::Instant};
 
 use orderflow_domain::{
-    AccountId, BookSnapshot, MarketSpec, MatchOutcome, MatchingEngine, NewOrder, Order, OrderId,
+    AccountId, BookSnapshot, EventPayload, MarketSpec, MatchOutcome, MatchingEngine, NewOrder,
+    Order, OrderId,
 };
 use tokio::{
     sync::{mpsc, oneshot},
@@ -183,15 +184,19 @@ impl MarketActor {
         };
 
         let changed: Vec<Order> = outcome.changed_orders().cloned().collect();
+        // Counted from events so trades of fired stop orders are included.
+        let trade_count = outcome
+            .events
+            .iter()
+            .filter(|event| matches!(event.payload, EventPayload::TradeExecuted(_)))
+            .count();
         let events = std::mem::take(&mut outcome.events);
         self.commit(events, &changed).await?;
 
         self.deps
             .metrics
             .order_processed(&market, outcome.order.status().as_str());
-        self.deps
-            .metrics
-            .trades_executed(&market, outcome.trades.len());
+        self.deps.metrics.trades_executed(&market, trade_count);
         self.deps.metrics.engine_latency(&market, started.elapsed());
         Ok(outcome)
     }
