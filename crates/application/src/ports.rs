@@ -55,7 +55,7 @@ pub trait OrderRepository: Send + Sync + 'static {
 /// Contract: `publish` returns `Ok` only once the sink has accepted the whole
 /// batch, and events of one market are handed over in sequence order.
 /// Delivery is at least once, so consumers de-duplicate on
-/// `(market, sequence)`.
+/// `(market, epoch, sequence)`.
 #[async_trait]
 pub trait EventPublisher: Send + Sync + 'static {
     async fn publish(&self, events: &[DomainEvent]) -> Result<(), PublishError>;
@@ -94,6 +94,7 @@ pub trait OrderIdGenerator: Send + Sync + 'static {
 
 /// Operational counters the runtime reports.
 pub trait Metrics: Send + Sync + 'static {
+
     fn order_processed(&self, market: &MarketId, outcome: &'static str);
     fn trades_executed(&self, market: &MarketId, count: usize);
     fn engine_latency(&self, market: &MarketId, elapsed: Duration);

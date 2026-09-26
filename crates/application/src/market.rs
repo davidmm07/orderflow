@@ -24,6 +24,10 @@ pub struct MarketDeps {
     pub clock: Arc<dyn Clock>,
     pub metrics: Arc<dyn Metrics>,
     pub outbox: Outbox,
+    /// Identifies this run of the service in every event it publishes, so
+    /// consumers never confuse a restart with duplicates. See
+    /// `MatchingEngine::new`.
+    pub epoch: u64,
 }
 
 type Reply<T> = oneshot::Sender<Result<T, ApplicationError>>;
@@ -131,7 +135,7 @@ pub fn spawn_market(
         sender,
     };
     let actor = MarketActor {
-        engine: MatchingEngine::new(spec),
+        engine: MatchingEngine::new(spec, deps.epoch),
         deps,
         receiver,
     };

@@ -10,7 +10,9 @@
 use orderflow_domain::{DomainEvent, EventPayload, Order, Trade};
 use serde::{Deserialize, Serialize};
 
-pub const SCHEMA_VERSION: u16 = 1;
+/// Version 2 added `epoch` and made it part of `event_id`, because sequence
+/// numbers restart at 1 on every run of the service.
+pub const SCHEMA_VERSION: u16 = 2;
 
 /// Envelope written to the event topic, one per domain event.
 ///
@@ -19,10 +21,13 @@ pub const SCHEMA_VERSION: u16 = 1;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EventRecord {
     pub schema_version: u16,
-    /// `{market}:{sequence}`. Stable across redeliveries, so consumers can
-    /// de-duplicate on it.
+    /// `{market}:{epoch}:{sequence}`. Stable across redeliveries and unique
+    /// across restarts, so consumers can de-duplicate on it.
     pub event_id: String,
     pub market: String,
+    /// Run of the service that produced the event. A higher epoch means a
+    /// later run; sequences count from 1 again in each one.
+    pub epoch: u64,
     pub sequence: u64,
     pub occurred_at_ns: u64,
     #[serde(flatten)]
@@ -122,8 +127,9 @@ impl From<&DomainEvent> for EventRecord {
         };
         Self {
             schema_version: SCHEMA_VERSION,
-            event_id: format!("{}:{}", event.market, event.sequence),
+            event_id: format!("{}:{}:{}", event.market, event.epoch, event.sequence),
             market: event.market.to_string(),
+            epoch: event.epoch,
             sequence: event.sequence,
             occurred_at_ns: event.occurred_at.unix_nanos(),
             body,
@@ -174,6 +180,7 @@ mod tests {
     fn cancel_event_has_a_stable_json_shape() {
         let event = DomainEvent {
             market: MarketId::parse("BTC-USD").unwrap(),
+            epoch: 1_790_000_000_000,
             sequence: 42,
             occurred_at: Timestamp::from_unix_nanos(1_700_000_000_000_000_000),
             payload: EventPayload::OrderCancelled {
@@ -188,9 +195,10 @@ mod tests {
         assert_eq!(
             value,
             json!({
-                "schema_version": 1,
-                "event_id": "BTC-USD:42",
+                "schema_version": 2,
+                "event_id": "BTC-USD:1790000000000:42",
                 "market": "BTC-USD",
+                "epoch": 1_790_000_000_000u64,
                 "sequence": 42,
                 "occurred_at_ns": 1_700_000_000_000_000_000u64,
                 "event_type": "order_cancelled",

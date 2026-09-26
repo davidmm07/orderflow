@@ -137,6 +137,7 @@ impl World {
             clock: Arc::new(TickingClock(AtomicU64::new(1))),
             metrics: Arc::new(NoopMetrics),
             outbox,
+            epoch: 1,
         };
         let (handle, engine) = spawn_market(spec, deps, 64);
         let registry = Arc::new(MarketRegistry::new([handle]));
@@ -401,6 +402,7 @@ async fn full_engine_queue_sheds_load_instead_of_queueing_forever() {
         clock: Arc::new(TickingClock(AtomicU64::new(1))),
         metrics: Arc::new(NoopMetrics),
         outbox,
+        epoch: 1,
     };
     let (handle, _engine) = spawn_market(spec, deps, 1);
     let place = PlaceOrder::new(

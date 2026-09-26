@@ -65,20 +65,32 @@ pub struct MatchingEngine {
     book: OrderBook,
     stops: StopBook,
     last_price: Option<Price>,
+    epoch: u64,
     sequence: u64,
     last_trade_id: u64,
 }
 
 impl MatchingEngine {
-    pub fn new(spec: MarketSpec) -> Self {
+    /// Creates an empty engine for one run identified by `epoch`.
+    ///
+    /// The epoch must differ between runs of the same market (the server
+    /// uses its start time in milliseconds). It is an input, like
+    /// timestamps, so replaying a run with the same epoch reproduces the
+    /// same events exactly.
+    pub fn new(spec: MarketSpec, epoch: u64) -> Self {
         Self {
             spec,
             book: OrderBook::default(),
             stops: StopBook::default(),
             last_price: None,
+            epoch,
             sequence: 0,
             last_trade_id: 0,
         }
+    }
+
+    pub fn epoch(&self) -> u64 {
+        self.epoch
     }
 
     pub fn spec(&self) -> &MarketSpec {
@@ -119,6 +131,7 @@ impl MatchingEngine {
         let (bids, asks) = self.book.depth(depth);
         BookSnapshot {
             market: self.spec.id().clone(),
+            epoch: self.epoch,
             sequence: self.sequence,
             last_price: self.last_price,
             bids,
@@ -358,6 +371,7 @@ impl MatchingEngine {
         self.sequence += 1;
         DomainEvent {
             market: self.spec.id().clone(),
+            epoch: self.epoch,
             sequence: self.sequence,
             occurred_at: now,
             payload,
@@ -451,7 +465,7 @@ mod tests {
                 .build()
                 .unwrap();
             Self {
-                engine: MatchingEngine::new(spec),
+                engine: MatchingEngine::new(spec, 1),
                 next_id: 0,
                 clock: 0,
             }
@@ -1068,6 +1082,23 @@ mod tests {
         .unwrap();
         let order = stop(&mut h, "carol", Side::Buy, kind, dec!(101), dec!(1));
         assert_eq!(h.submit(order), Err(DomainError::StopOrderPostOnly));
+    }
+
+    #[test]
+    fn a_new_epoch_restarts_sequences_under_a_different_identity() {
+        let run = |epoch| {
+            let mut h = Harness::new();
+            h.engine = MatchingEngine::new(h.engine.spec().clone(), epoch);
+            let outcome = h.limit("alice", Side::Buy, dec!(100), dec!(1));
+            let event = outcome.events[0].clone();
+            (event.epoch, event.sequence, h.engine.snapshot(1).epoch)
+        };
+        assert_eq!(run(10), (10, 1, 10));
+        assert_eq!(
+            run(11),
+            (11, 1, 11),
+            "same sequence, told apart by the epoch"
+        );
     }
 
     #[test]

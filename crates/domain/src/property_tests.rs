@@ -76,7 +76,7 @@ fn engine() -> MatchingEngine {
         .max_quantity(Decimal::from(1000))
         .build()
         .unwrap();
-    MatchingEngine::new(spec)
+    MatchingEngine::new(spec, 42)
 }
 
 fn account(n: u8) -> AccountId {

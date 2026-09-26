@@ -30,6 +30,8 @@ pub struct LevelView {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BookSnapshot {
     pub market: MarketId,
+    /// Run of the engine that produced the snapshot, see `DomainEvent`.
+    pub epoch: u64,
     /// Sequence of the last event applied before the snapshot was taken.
     pub sequence: u64,
     /// Price of the most recent trade, `None` before the first one.

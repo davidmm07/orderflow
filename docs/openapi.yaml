@@ -403,9 +403,12 @@ components:
 
     OrderBook:
       type: object
-      required: [market, sequence, bids, asks]
+      required: [market, epoch, sequence, bids, asks]
       properties:
         market: { type: string }
+        epoch:
+          type: integer
+          description: Start time in milliseconds of the engine run; sequences count from 1 again in each epoch.
         sequence: { type: integer, description: Last event applied before the snapshot. }
         last_price:
           type: [string, "null"]

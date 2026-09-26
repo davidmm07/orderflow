@@ -419,14 +419,18 @@ Who reads the stream in a real exchange, each as its own consumer group:
 A slow or crashed consumer does not slow matching: it resumes from its
 last committed offset. Records are keyed by market, so every market stays
 ordered on one partition; delivery is at least once, and `event_id`
-(`{market}:{sequence}`) lets consumers drop duplicates and spot gaps
+(`{market}:{epoch}:{sequence}`) lets consumers drop duplicates and spot
+gaps. `epoch` is the start time of the service run: sequences count from 1
+again after a restart, and the epoch keeps those events from being
+mistaken for duplicates
 ([ADR 0003](docs/adr/0003-event-delivery-and-durability.md)).
 
 A record as it appears on the topic (`data` fields shortened):
 
 ```json
-{"schema_version": 1, "event_id": "BTC-USD:5", "market": "BTC-USD", "sequence": 5,
- "occurred_at_ns": 1790462352161804702, "event_type": "trade_executed",
+{"schema_version": 2, "event_id": "BTC-USD:1790463231117:5", "market": "BTC-USD",
+ "epoch": 1790463231117, "sequence": 5, "occurred_at_ns": 1790463252161804702,
+ "event_type": "trade_executed",
  "data": {"trade_id": 1, "price": "64000.25", "quantity": "0.002", "taker_side": "sell", "...": "..."}}
 ```
 
@@ -656,11 +660,6 @@ Commits follow [Conventional Commits](https://www.conventionalcommits.org):
   and the tick size needed for the conversion is already known per market.
 - Replay protection relies on the timestamp window. A short-lived nonce
   cache would close the remaining 30 seconds.
-- Sequence numbers restart at 1 when the process restarts, because state
-  lives in memory. A consumer that de-duplicates on `(market, sequence)`
-  would drop the first events after a restart as duplicates. The journal
-  from ADR 0003 removes this; until then, a per-process epoch in each event
-  would let consumers tell the runs apart.
 
 ## License
 

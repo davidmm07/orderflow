@@ -216,6 +216,8 @@ impl From<&LevelView> for LevelDto {
 #[derive(Debug, Serialize)]
 pub struct BookView {
     pub market: String,
+    /// Run of the engine; `sequence` counts from 1 again in each epoch.
+    pub epoch: u64,
     pub sequence: u64,
     pub last_price: Option<String>,
     pub bids: Vec<LevelDto>,
@@ -226,6 +228,7 @@ impl From<&BookSnapshot> for BookView {
     fn from(book: &BookSnapshot) -> Self {
         Self {
             market: book.market.to_string(),
+            epoch: book.epoch,
             sequence: book.sequence,
             last_price: book.last_price.map(|price| price.to_string()),
             bids: book.bids.iter().map(LevelDto::from).collect(),

@@ -12,9 +12,13 @@ They need to know what is guaranteed about ordering, duplicates and loss.
 
 - Events are published at least once. The retry decorator can resend a
   batch that the broker partly accepted, so consumers must be idempotent.
-- Every event carries `event_id = "{market}:{sequence}"`. Sequence numbers
-  are contiguous per market, so a consumer can de-duplicate and detect gaps
-  by keeping one integer per market.
+- Every event carries an `epoch`, the start time in milliseconds of the run
+  that produced it, and `event_id = "{market}:{epoch}:{sequence}"`.
+  Sequence numbers are contiguous per market within an epoch and restart at
+  1 when the service restarts, because state lives in memory. A consumer
+  keeps the last `(epoch, sequence)` per market: a higher epoch means a new
+  run, the same epoch with a sequence at or below the last one is a
+  duplicate, and a jump of more than one is a gap.
 - Kafka records are keyed by market id. Kafka orders messages within a
   partition, so every consumer sees each market's events in sequence order.
 - The producer runs with `enable.idempotence=true` and `acks=all`.
@@ -22,7 +26,10 @@ They need to know what is guaranteed about ordering, duplicates and loss.
   mapped by hand from the domain types. Decimals are strings. Additive
   changes keep the version: `stop_triggered` events and the optional
   `stop_price` field were added under version 1, so consumers must skip
-  event types and fields they do not know.
+  event types and fields they do not know. Version 2 added `epoch` and
+  changed the `event_id` format, a breaking change for consumers that
+  de-duplicated on `(market, sequence)`, which lost events after every
+  restart.
 - Transient errors are retried with exponential backoff and full jitter.
   Permanent errors, such as authorization failures or an unknown topic,
   are reported without retrying.

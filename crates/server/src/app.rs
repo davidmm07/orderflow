@@ -6,7 +6,7 @@ use anyhow::Context;
 use axum::Router;
 use orderflow_api::{ApiConfig, AppState, Authenticator, Credential, HttpMetrics, RateLimiter};
 use orderflow_application::{
-    CancelOrder, EventDispatcher, EventPublisher, MarketDeps, MarketRegistry, OrderQueries,
+    CancelOrder, Clock, EventDispatcher, EventPublisher, MarketDeps, MarketRegistry, OrderQueries,
     OrderRepository, PlaceOrder, outbox, spawn_market,
 };
 use orderflow_domain::InstrumentCatalog;
@@ -48,11 +48,18 @@ pub fn build(settings: &Settings, catalog: InstrumentCatalog) -> anyhow::Result<
     )
     .spawn();
 
+    // Each run publishes under its own epoch, its start time in
+    // milliseconds, so sequence numbers that restart at 1 after a restart
+    // never collide with the previous run's events.
+    let clock = Arc::new(MonotonicClock::default());
+    let epoch = clock.now().unix_nanos() / 1_000_000;
+    tracing::info!(epoch, "event stream epoch for this run");
     let deps = MarketDeps {
         repository: repository.clone(),
-        clock: Arc::new(MonotonicClock::default()),
+        clock,
         metrics: metrics.clone(),
         outbox,
+        epoch,
     };
     let (handles, engines): (Vec<_>, Vec<_>) = markets
         .into_iter()

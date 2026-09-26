@@ -26,11 +26,15 @@ pub struct Trade {
 
 /// An immutable fact about a market, in the order it happened.
 ///
-/// `sequence` is contiguous per market, starting at 1. Downstream consumers
-/// use it to detect gaps and to discard duplicates after a redelivery.
+/// `sequence` is contiguous per market within one `epoch`, starting at 1.
+/// The epoch identifies one run of the engine: a restart starts a new epoch
+/// and counts from 1 again. Downstream consumers identify an event by
+/// `(market, epoch, sequence)`, which lets them detect gaps and discard
+/// duplicates after a redelivery without mistaking a restart for either.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DomainEvent {
     pub market: MarketId,
+    pub epoch: u64,
     pub sequence: u64,
     pub occurred_at: Timestamp,
     pub payload: EventPayload,

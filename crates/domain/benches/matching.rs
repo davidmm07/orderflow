@@ -42,7 +42,7 @@ fn order(n: u128, side: Side, price: u32, quantity: u32, account: &AccountId) ->
 /// A book with `levels` ask levels of `per_level` orders each.
 fn seeded_engine(levels: u32, per_level: u32) -> MatchingEngine {
     let maker = AccountId::parse("maker").unwrap_or_else(|_| unreachable!());
-    let mut engine = MatchingEngine::new(spec());
+    let mut engine = MatchingEngine::new(spec(), 1);
     let mut n = 0;
     for level in 0..levels {
         for _ in 0..per_level {

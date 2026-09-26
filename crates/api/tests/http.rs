@@ -48,6 +48,7 @@ fn app_with(rate_limit: RateLimitConfig) -> Router {
         clock: Arc::new(MonotonicClock::default()),
         metrics: metrics.clone(),
         outbox,
+        epoch: 1,
     };
     let (assets, markets) = catalog().into_parts();
     let handles: Vec<_> = markets
@@ -315,6 +316,7 @@ async fn crossing_orders_trade_and_update_the_book() {
         json!({ "price": "101", "quantity": "1.5", "orders": 1 })
     );
     assert_eq!(book.body["sequence"], 3);
+    assert_eq!(book.body["epoch"], 1);
 }
 
 #[tokio::test]

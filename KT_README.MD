@@ -427,9 +427,12 @@ Things to check in each record:
 - The key is the market id. Kafka keeps order within a partition and the
   key sends every event of a market to the same partition, so each market
   stays ordered.
-- `event_id` is `{market}:{sequence}`. Delivery is at least once, so
-  consumers de-duplicate on it and use the sequence to detect gaps.
-- `schema_version` is 1. The JSON shape is defined in
+- `event_id` is `{market}:{epoch}:{sequence}`. Delivery is at least once,
+  so consumers de-duplicate on it and use the sequence to detect gaps.
+  `epoch` is the start time of the service run in milliseconds; sequences
+  count from 1 again after every restart, and the epoch tells the runs
+  apart.
+- `schema_version` is 2. The JSON shape is defined in
   [`wire.rs`](crates/infrastructure/src/events/wire.rs), mapped by hand
   from the domain types and covered by a test. A breaking change needs a
   new version.
@@ -439,11 +442,18 @@ Things to check in each record:
 Run `make topics` to see the six partitions. All events of one market
 land on the same partition, which is what keeps each market in order.
 
-A consumer processes each record in this order: parse it; skip it if its
-sequence is not above the last one applied for that market (a duplicate);
-stop and alert if it jumps by more than one (a gap); apply it; then commit
-the offset. Committing after applying is what makes the consumer safe to
-crash and restart.
+A consumer keeps the last `(epoch, sequence)` it applied for each market
+and processes each record in this order:
+
+1. Parse it.
+2. If its epoch is higher than the last one, a new run started: accept
+   sequence 1 of that epoch as the next event.
+3. If the epoch is the same and the sequence is not above the last one,
+   it is a duplicate: skip it.
+4. If the sequence jumps by more than one, events are missing: stop and
+   alert.
+5. Apply it, then commit the offset. Committing after applying is what
+   makes the consumer safe to crash and restart.
 
 ```bash
 make down
