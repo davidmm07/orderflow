@@ -62,10 +62,13 @@ fn benchmarks(c: &mut Criterion) {
         b.iter_batched(
             || seeded_engine(50, 4),
             |mut engine| {
-                black_box(engine.submit(
+                let outcome = engine.submit(
                     order(1_000_000, Side::Buy, 900, 10, &taker),
                     Timestamp::from_unix_nanos(1),
-                ))
+                );
+                // Returning the engine moves its drop outside the timed
+                // section, so only the submit itself is measured.
+                (engine, black_box(outcome))
             },
             BatchSize::SmallInput,
         );
@@ -75,10 +78,11 @@ fn benchmarks(c: &mut Criterion) {
         b.iter_batched(
             || seeded_engine(50, 4),
             |mut engine| {
-                black_box(engine.submit(
+                let outcome = engine.submit(
                     order(1_000_000, Side::Buy, 1_010, 400, &taker),
                     Timestamp::from_unix_nanos(1),
-                ))
+                );
+                (engine, black_box(outcome))
             },
             BatchSize::SmallInput,
         );
