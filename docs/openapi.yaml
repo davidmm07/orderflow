@@ -1,0 +1,372 @@
+openapi: 3.1.0
+info:
+  title: Orderflow API
+  version: 0.1.0
+  summary: Matching engine and order API for spot markets.
+  description: |
+    Private endpoints require an HMAC-SHA256 signature of
+    `timestamp + METHOD + path_and_query + body`, hex encoded, sent with the
+    key id and the unix timestamp in seconds. Requests older or newer than
+    the tolerance window (30 seconds by default) are rejected.
+
+    Decimal values are strings. Errors are RFC 9457 problem documents; see
+    docs/errors.md for the full catalog.
+  license:
+    name: MIT
+servers:
+  - url: http://127.0.0.1:8080
+
+tags:
+  - name: Markets
+    description: Public market data.
+  - name: Orders
+    description: Signed order management.
+  - name: Operations
+    description: Health and metrics.
+
+paths:
+  /v1/markets:
+    get:
+      tags: [Markets]
+      operationId: listMarkets
+      summary: List tradable markets and their parameters.
+      responses:
+        "200":
+          description: Listed markets, sorted by id.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [markets]
+                properties:
+                  markets:
+                    type: array
+                    items: { $ref: "#/components/schemas/Market" }
+
+  /v1/markets/{market}/book:
+    get:
+      tags: [Markets]
+      operationId: getOrderBook
+      summary: Aggregated order book snapshot, best prices first.
+      parameters:
+        - $ref: "#/components/parameters/Market"
+        - name: depth
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 10 }
+      responses:
+        "200":
+          description: Snapshot consistent with the reported sequence number.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrderBook" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+
+  /v1/markets/{market}/orders:
+    post:
+      tags: [Orders]
+      operationId: placeOrder
+      summary: Place a limit or market order.
+      security:
+        - apiKey: []
+          timestamp: []
+          signature: []
+      parameters:
+        - $ref: "#/components/parameters/Market"
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: |
+            Makes the request safe to retry. A retry with the same key and
+            body returns the original response with
+            `Idempotent-Replayed: true`. Keys are scoped to the account.
+          schema: { type: string, minLength: 1, maxLength: 64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PlaceOrderRequest" }
+            examples:
+              limit:
+                value: { side: buy, type: limit, price: "64000.50", quantity: "0.25", client_order_id: my-order-1 }
+              market:
+                value: { side: sell, type: market, quantity: "0.1" }
+      responses:
+        "201":
+          description: Order accepted. It may already be filled or cancelled.
+          headers:
+            Location:
+              schema: { type: string }
+              description: URL of the new order.
+            Idempotent-Replayed:
+              schema: { type: string, enum: ["true"] }
+              description: Present when the response is a replay.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlaceOrderResponse" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "413": { $ref: "#/components/responses/Problem" }
+        "415": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+
+  /v1/markets/{market}/orders/{order_id}:
+    parameters:
+      - $ref: "#/components/parameters/Market"
+      - name: order_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Orders]
+      operationId: getOrder
+      summary: Read one of your orders.
+      security:
+        - apiKey: []
+          timestamp: []
+          signature: []
+      responses:
+        "200":
+          description: Current state of the order.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Order" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [Orders]
+      operationId: cancelOrder
+      summary: Cancel one of your resting orders.
+      security:
+        - apiKey: []
+          timestamp: []
+          signature: []
+      responses:
+        "200":
+          description: The cancelled order.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Order" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+
+  /health/live:
+    get:
+      tags: [Operations]
+      operationId: live
+      summary: The process is up.
+      responses:
+        "200":
+          description: Alive.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Status" }
+
+  /health/ready:
+    get:
+      tags: [Operations]
+      operationId: ready
+      summary: Every market engine is running.
+      responses:
+        "200":
+          description: Ready for traffic.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Status" }
+        "503":
+          description: Not ready.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Status" }
+
+  /metrics:
+    get:
+      tags: [Operations]
+      operationId: metrics
+      summary: Prometheus text exposition.
+      responses:
+        "200":
+          description: Metrics.
+          content:
+            text/plain:
+              schema: { type: string }
+
+components:
+  securitySchemes:
+    apiKey:
+      type: apiKey
+      in: header
+      name: x-orderflow-key
+    timestamp:
+      type: apiKey
+      in: header
+      name: x-orderflow-timestamp
+      description: Unix time in seconds.
+    signature:
+      type: apiKey
+      in: header
+      name: x-orderflow-signature
+      description: Hex HMAC-SHA256 of timestamp + METHOD + path_and_query + body.
+
+  parameters:
+    Market:
+      name: market
+      in: path
+      required: true
+      schema: { type: string, pattern: "^[A-Z0-9]{2,10}-[A-Z0-9]{2,10}$", example: BTC-USD }
+
+  responses:
+    Problem:
+      description: RFC 9457 problem document.
+      headers:
+        Retry-After:
+          schema: { type: integer }
+          description: Seconds to wait, on 409 in-flight, 429 and 503.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+
+  schemas:
+    Decimal:
+      type: string
+      pattern: "^[0-9]*\\.?[0-9]+$"
+      maxLength: 40
+      example: "101.25"
+
+    PlaceOrderRequest:
+      type: object
+      additionalProperties: false
+      required: [side, type, quantity]
+      properties:
+        side: { type: string, enum: [buy, sell] }
+        type: { type: string, enum: [limit, market] }
+        price:
+          allOf: [{ $ref: "#/components/schemas/Decimal" }]
+          description: Required for limit orders. Market orders must omit it.
+        quantity: { $ref: "#/components/schemas/Decimal" }
+        time_in_force:
+          type: string
+          enum: [gtc, ioc, fok]
+          default: gtc
+          description: Limit orders only.
+        post_only:
+          type: boolean
+          default: false
+          description: Limit orders with gtc only. Rejected if it would trade on arrival.
+        client_order_id:
+          type: string
+          pattern: "^[A-Za-z0-9_-]{1,36}$"
+        self_trade_prevention:
+          type: string
+          enum: [cancel_newest, cancel_oldest]
+          default: cancel_newest
+
+    Order:
+      type: object
+      required: [id, market, side, type, post_only, self_trade_prevention, quantity, filled_quantity, remaining_quantity, status, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        client_order_id: { type: [string, "null"] }
+        market: { type: string }
+        side: { type: string, enum: [buy, sell] }
+        type: { type: string, enum: [limit, market] }
+        price: { type: [string, "null"] }
+        time_in_force: { type: [string, "null"], enum: [gtc, ioc, fok, null] }
+        post_only: { type: boolean }
+        self_trade_prevention: { type: string, enum: [cancel_newest, cancel_oldest] }
+        quantity: { $ref: "#/components/schemas/Decimal" }
+        filled_quantity: { $ref: "#/components/schemas/Decimal" }
+        remaining_quantity: { $ref: "#/components/schemas/Decimal" }
+        status: { type: string, enum: [open, partially_filled, filled, cancelled] }
+        cancel_reason:
+          type: [string, "null"]
+          enum: [requested, immediate_or_cancel, fill_or_kill, no_liquidity, self_trade_prevention, null]
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    Fill:
+      type: object
+      required: [trade_id, price, quantity, maker_order_id, executed_at]
+      properties:
+        trade_id: { type: integer, description: Per market sequence. }
+        price: { $ref: "#/components/schemas/Decimal" }
+        quantity: { $ref: "#/components/schemas/Decimal" }
+        maker_order_id: { type: string, format: uuid }
+        executed_at: { type: string, format: date-time }
+
+    PlaceOrderResponse:
+      type: object
+      required: [order, fills]
+      properties:
+        order: { $ref: "#/components/schemas/Order" }
+        fills:
+          type: array
+          items: { $ref: "#/components/schemas/Fill" }
+
+    Market:
+      type: object
+      required: [id, base, quote, tick_size, lot_size, min_quantity, max_quantity]
+      properties:
+        id: { type: string, example: BTC-USD }
+        base: { type: string, example: BTC }
+        quote: { type: string, example: USD }
+        tick_size: { $ref: "#/components/schemas/Decimal" }
+        lot_size: { $ref: "#/components/schemas/Decimal" }
+        min_quantity: { $ref: "#/components/schemas/Decimal" }
+        max_quantity: { $ref: "#/components/schemas/Decimal" }
+
+    Level:
+      type: object
+      required: [price, quantity, orders]
+      properties:
+        price: { $ref: "#/components/schemas/Decimal" }
+        quantity: { $ref: "#/components/schemas/Decimal" }
+        orders: { type: integer }
+
+    OrderBook:
+      type: object
+      required: [market, sequence, bids, asks]
+      properties:
+        market: { type: string }
+        sequence: { type: integer, description: Last event applied before the snapshot. }
+        bids:
+          type: array
+          items: { $ref: "#/components/schemas/Level" }
+        asks:
+          type: array
+          items: { $ref: "#/components/schemas/Level" }
+
+    Status:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [ok, ready, not_ready] }
+
+    FieldError:
+      type: object
+      required: [field, code, message]
+      properties:
+        field: { type: string }
+        code: { type: string }
+        message: { type: string }
+
+    Problem:
+      type: object
+      required: [type, title, status, detail, code]
+      properties:
+        type: { type: string, example: "urn:orderflow:problem:validation_failed" }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        code: { type: string, description: Stable machine readable identifier. }
+        errors:
+          type: array
+          items: { $ref: "#/components/schemas/FieldError" }
