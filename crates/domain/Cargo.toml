@@ -1,0 +1,25 @@
+[package]
+name = "orderflow-domain"
+description = "Trading domain model and deterministic price-time matching engine."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+rust_decimal.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+proptest.workspace = true
+rust_decimal_macros.workspace = true
+
+[[bench]]
+name = "matching"
+harness = false
+
+[lints]
+workspace = true
