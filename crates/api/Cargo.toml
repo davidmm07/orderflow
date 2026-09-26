@@ -1,0 +1,33 @@
+[package]
+name = "orderflow-api"
+description = "Versioned REST API for Orderflow: routing, validation, auth and error mapping."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+axum.workspace = true
+chrono.workspace = true
+hex.workspace = true
+hmac.workspace = true
+http-body-util.workspace = true
+orderflow-application.workspace = true
+orderflow-domain.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["time"] }
+tower = { workspace = true, features = ["util"] }
+tower-http = { workspace = true, features = ["catch-panic", "request-id", "set-header", "timeout", "trace", "util"] }
+tracing.workspace = true
+
+[dev-dependencies]
+orderflow-infrastructure.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
+serde_json.workspace = true
+
+[lints]
+workspace = true
