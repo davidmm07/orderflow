@@ -10,8 +10,8 @@ use std::{
     time::Duration,
 };
 
-use orderflow_application::Metrics;
-use orderflow_domain::MarketId;
+use orderflow_application::{Metrics, REJECTED_OUTCOME};
+use orderflow_domain::{MarketId, OrderStatus};
 
 use crate::sync::lock;
 
@@ -147,6 +147,23 @@ impl PrometheusMetrics {
 }
 
 impl Metrics for PrometheusMetrics {
+    /// Creates every series of the market at zero. Prometheus computes
+    /// `rate()` from the difference between samples, so a series whose
+    /// first sample is already 3 would hide those first 3 trades.
+    fn market_listed(&self, market: &MarketId) {
+        let outcomes = OrderStatus::ALL
+            .iter()
+            .filter(|status| **status != OrderStatus::New)
+            .map(|status| status.as_str())
+            .chain([REJECTED_OUTCOME]);
+        let mut orders = lock(&self.orders);
+        for outcome in outcomes {
+            orders.entry((market.clone(), outcome)).or_default();
+        }
+        lock(&self.trades).entry(market.clone()).or_default();
+        lock(&self.latency).entry(market.clone()).or_default();
+    }
+
     fn order_processed(&self, market: &MarketId, outcome: &'static str) {
         *lock(&self.orders)
             .entry((market.clone(), outcome))
@@ -204,6 +221,28 @@ mod tests {
         assert_eq!(seconds(1_000), "0.000001");
         assert_eq!(seconds(1_500_000_000), "1.5");
         assert_eq!(seconds(0), "0.0");
+    }
+
+    #[test]
+    fn listed_markets_export_zero_series_before_any_order() {
+        let metrics = PrometheusMetrics::new();
+        metrics.market_listed(&MarketId::parse("SOL-USD").unwrap());
+        let text = metrics.render();
+        for outcome in [
+            "pending",
+            "open",
+            "partially_filled",
+            "filled",
+            "cancelled",
+            "rejected",
+        ] {
+            let line =
+                format!("orderflow_orders_total{{market=\"SOL-USD\",outcome=\"{outcome}\"}} 0");
+            assert!(text.contains(&line), "missing {line}");
+        }
+        assert!(!text.contains("outcome=\"new\""));
+        assert!(text.contains("orderflow_trades_total{market=\"SOL-USD\"} 0"));
+        assert!(text.contains("orderflow_engine_latency_seconds_count{market=\"SOL-USD\"} 0"));
     }
 
     #[test]

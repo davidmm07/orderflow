@@ -26,6 +26,37 @@ use crate::{
     state::AppState,
 };
 
+const ASSETS: &str = "/v1/assets";
+const MARKETS: &str = "/v1/markets";
+const MARKET: &str = "/v1/markets/{market}";
+const BOOK: &str = "/v1/markets/{market}/book";
+const ORDERS: &str = "/v1/markets/{market}/orders";
+const ORDER: &str = "/v1/markets/{market}/orders/{order_id}";
+
+/// Problem codes that alerts and dashboard panels watch, per route. Their
+/// series exist from startup so the first occurrence is visible to `rate()`.
+const WATCHED_PROBLEMS: [(&str, &[&str]); 3] = [
+    (
+        ORDERS,
+        &[
+            "unauthenticated",
+            "rate_limited",
+            "market_overloaded",
+            "request_timeout",
+        ],
+    ),
+    (
+        ORDER,
+        &[
+            "unauthenticated",
+            "rate_limited",
+            "market_overloaded",
+            "request_timeout",
+        ],
+    ),
+    (BOOK, &["market_overloaded", "request_timeout"]),
+];
+
 #[derive(Debug, Clone, Copy)]
 pub struct ApiConfig {
     /// Upper bound for a whole request, after which the client gets a 503
@@ -42,17 +73,15 @@ pub struct ApiConfig {
 /// and the timeout. Authentication and rate limiting run last, and only on
 /// the private routes.
 pub fn router(state: AppState, config: &ApiConfig) -> Router {
+    for (route, codes) in WATCHED_PROBLEMS {
+        state.http_metrics.expect_problems(route, codes);
+    }
+
     // `route_layer` runs the last added layer first, so requests are
     // authenticated before they are rate limited.
     let private = Router::new()
-        .route(
-            "/v1/markets/{market}/orders",
-            axum::routing::post(orders::place),
-        )
-        .route(
-            "/v1/markets/{market}/orders/{order_id}",
-            get(orders::get).delete(orders::cancel),
-        )
+        .route(ORDERS, axum::routing::post(orders::place))
+        .route(ORDER, get(orders::get).delete(orders::cancel))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             rate_limit::enforce,
@@ -63,10 +92,10 @@ pub fn router(state: AppState, config: &ApiConfig) -> Router {
         ));
 
     let public = Router::new()
-        .route("/v1/assets", get(markets::assets))
-        .route("/v1/markets", get(markets::list))
-        .route("/v1/markets/{market}", get(markets::get))
-        .route("/v1/markets/{market}/book", get(markets::book))
+        .route(ASSETS, get(markets::assets))
+        .route(MARKETS, get(markets::list))
+        .route(MARKET, get(markets::get))
+        .route(BOOK, get(markets::book))
         .route("/health/live", get(ops::live))
         .route("/health/ready", get(ops::ready))
         .route("/metrics", get(ops::metrics));

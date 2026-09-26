@@ -92,8 +92,16 @@ pub trait OrderIdGenerator: Send + Sync + 'static {
     fn next_id(&self) -> OrderId;
 }
 
+/// Outcome label for orders that fail a market rule. Every other outcome is
+/// the order's resulting `OrderStatus`.
+pub const REJECTED_OUTCOME: &str = "rejected";
+
 /// Operational counters the runtime reports.
 pub trait Metrics: Send + Sync + 'static {
+    /// Called once per market before its first order, so an adapter can
+    /// create that market's series at zero. A counter that first appears
+    /// with a value above zero hides its first increase from `rate()`.
+    fn market_listed(&self, _market: &MarketId) {}
 
     fn order_processed(&self, market: &MarketId, outcome: &'static str);
     fn trades_executed(&self, market: &MarketId, count: usize);

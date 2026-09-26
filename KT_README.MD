@@ -72,7 +72,7 @@ clippy and rustfmt, so everyone on the team uses the same compiler.
 make test
 ```
 
-After the first build, six suites with 103 tests should pass in well under a
+After the first build, six suites with 110 tests should pass in well under a
 minute:
 
 | Suite | Where | What it checks |

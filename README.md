@@ -490,6 +490,13 @@ unknown paths share the label `unmatched`, and problem codes are the fixed
 list in [docs/errors.md](docs/errors.md), so a client cannot create
 unlimited time series.
 
+Every series that a graph or alert watches exists at zero from startup:
+per-market engine counters, and the problem codes behind the
+`LoadShedding` and `AuthenticationFailuresHigh` alerts. Prometheus computes
+`rate()` and `increase()` from the difference between samples, so a
+counter that first appeared already at 48 would hide those first 48
+events.
+
 ### Prometheus and Grafana
 
 `make up` starts Prometheus and Grafana next to the service, configured
@@ -539,15 +546,15 @@ sits behind single sign-on.
 
 ## Testing
 
-`make test` runs 107 tests, all offline:
+`make test` runs 110 tests, all offline:
 
 | Suite | Count | What it covers |
 |---|---|---|
-| Domain unit tests | 41 | Matching rules, stop orders and cascades, value objects, the instrument catalog |
+| Domain unit tests | 42 | Matching rules, stop orders and cascades, value objects, the instrument catalog |
 | Domain property tests | 2 x 256 cases | Random order flow, stops included, keeps every book invariant; matching is deterministic |
 | Application tests | 7 | Use cases with hand written fakes, idempotency, load shedding |
-| Infrastructure tests | 11 | TTLs and caps with paused time, retry policy, wire schema, metrics |
-| API unit and HTTP tests | 18 + 19 | Signing, validation, stop orders, discovery, rate limits, timeouts, HTTP metrics, the full router end to end |
+| Infrastructure tests | 12 | TTLs and caps with paused time, retry policy, wire schema, metrics |
+| API unit and HTTP tests | 18 + 20 | Signing, validation, stop orders, discovery, rate limits, timeouts, HTTP metrics, the full router end to end |
 | Server tests | 9 | Config parsing, secret redaction, instrument catalog loading |
 
 Set `PROPTEST_CASES` for longer property runs; 20,000 cases take about two

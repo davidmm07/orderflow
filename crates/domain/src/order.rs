@@ -150,6 +150,15 @@ pub enum OrderStatus {
 }
 
 impl OrderStatus {
+    pub const ALL: [Self; 6] = [
+        Self::New,
+        Self::Pending,
+        Self::Open,
+        Self::PartiallyFilled,
+        Self::Filled,
+        Self::Cancelled,
+    ];
+
     pub const fn is_terminal(self) -> bool {
         matches!(self, Self::Filled | Self::Cancelled)
     }

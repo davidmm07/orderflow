@@ -14,7 +14,7 @@ use tokio::{
 use crate::{
     error::ApplicationError,
     outbox::Outbox,
-    ports::{Clock, Metrics, OrderRepository},
+    ports::{Clock, Metrics, OrderRepository, REJECTED_OUTCOME},
 };
 
 /// Everything a market actor needs from the outside.
@@ -129,6 +129,7 @@ pub fn spawn_market(
     deps: MarketDeps,
     queue_capacity: usize,
 ) -> (MarketHandle, JoinHandle<()>) {
+    deps.metrics.market_listed(spec.id());
     let (sender, receiver) = mpsc::channel(queue_capacity.max(1));
     let handle = MarketHandle {
         spec: Arc::new(spec.clone()),
@@ -182,7 +183,7 @@ impl MarketActor {
         let mut outcome = match self.engine.submit(order, now) {
             Ok(outcome) => outcome,
             Err(error) => {
-                self.deps.metrics.order_processed(&market, "rejected");
+                self.deps.metrics.order_processed(&market, REJECTED_OUTCOME);
                 return Err(error.into());
             }
         };

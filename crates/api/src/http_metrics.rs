@@ -95,6 +95,16 @@ impl HttpMetrics {
             .observe(micros);
     }
 
+    /// Creates `(route, code)` problem series at zero. Prometheus computes
+    /// `rate()` from the difference between samples, so a series that first
+    /// appears already at 48 hides those 48 problems from graphs and alerts.
+    pub(crate) fn expect_problems(&self, route: &str, codes: &[&'static str]) {
+        let mut problems = lock(&self.problems);
+        for code in codes {
+            problems.entry((route.to_owned(), *code)).or_default();
+        }
+    }
+
     pub fn render(&self) -> String {
         let requests = lock(&self.requests).clone();
         let problems = lock(&self.problems).clone();

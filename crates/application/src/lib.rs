@@ -33,7 +33,7 @@ pub use market::{MarketDeps, MarketHandle, spawn_market};
 pub use outbox::{EventDispatcher, Outbox, OutboxReceiver, outbox};
 pub use ports::{
     Clock, EventPublisher, IdempotencyStore, Metrics, NoopMetrics, OrderIdGenerator,
-    OrderRepository, PublishError, RepositoryError,
+    OrderRepository, PublishError, REJECTED_OUTCOME, RepositoryError,
 };
 pub use registry::MarketRegistry;
 pub use use_cases::{CancelOrder, OrderQueries, PlaceOrder, Placement};

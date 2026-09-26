@@ -701,6 +701,31 @@ async fn instruments_can_be_discovered_and_filtered() {
 }
 
 #[tokio::test]
+async fn watched_counters_exist_at_zero_before_any_traffic() {
+    let reply = app().oneshot(get("/metrics")).await.unwrap();
+    let text = String::from_utf8(
+        reply
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec(),
+    )
+    .unwrap();
+    for line in [
+        r#"orderflow_http_problems_total{route="/v1/markets/{market}/orders",code="rate_limited"} 0"#,
+        r#"orderflow_http_problems_total{route="/v1/markets/{market}/orders",code="market_overloaded"} 0"#,
+        r#"orderflow_http_problems_total{route="/v1/markets/{market}/orders/{order_id}",code="unauthenticated"} 0"#,
+        r#"orderflow_http_problems_total{route="/v1/markets/{market}/book",code="request_timeout"} 0"#,
+        r#"orderflow_trades_total{market="ETH-USD"} 0"#,
+        r#"orderflow_orders_total{market="ETH-USD",outcome="rejected"} 0"#,
+    ] {
+        assert!(text.contains(line), "missing {line}\n{text}");
+    }
+}
+
+#[tokio::test]
 async fn metrics_count_requests_by_route_template_and_problem_code() {
     let app = app();
     let unsigned = Request::builder()
