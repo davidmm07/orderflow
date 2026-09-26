@@ -1,0 +1,22 @@
+[package]
+name = "orderflow-application"
+description = "Use cases, ports and the single-writer market runtime for Orderflow."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+orderflow-domain.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "sync"] }
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+uuid.workspace = true
+
+[lints]
+workspace = true
