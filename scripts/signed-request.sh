@@ -3,9 +3,10 @@
 #
 # Usage: scripts/signed-request.sh METHOD PATH [JSON_BODY]
 #
-# Credentials come from ORDERFLOW_KEY_ID and ORDERFLOW_SECRET, or from the
-# first entry of ORDERFLOW_API_CREDENTIALS in .env. The secret is passed to
-# the signer through the environment, never as a command line argument.
+# Credentials come from ORDERFLOW_KEY_ID and ORDERFLOW_SECRET, or from entry
+# number ORDERFLOW_CREDENTIAL (default 1) of ORDERFLOW_API_CREDENTIALS in
+# .env. The secret is passed to the signer through the environment, never as
+# a command line argument.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -24,7 +25,8 @@ if [[ -z "${ORDERFLOW_KEY_ID:-}" || -z "${ORDERFLOW_SECRET:-}" ]]; then
     echo "No credentials: set ORDERFLOW_KEY_ID and ORDERFLOW_SECRET, or run make env." >&2
     exit 1
   fi
-  entry=$(grep -E '^ORDERFLOW_API_CREDENTIALS=' .env | head -n1 | cut -d= -f2- | cut -d, -f1)
+  entry=$(grep -E '^ORDERFLOW_API_CREDENTIALS=' .env | head -n1 | cut -d= -f2- \
+    | cut -d, -f"${ORDERFLOW_CREDENTIAL:-1}")
   ORDERFLOW_KEY_ID=${entry%%:*}
   ORDERFLOW_SECRET=${entry#*:*:}
 fi

@@ -47,6 +47,27 @@ jobs:
       # Compiles librdkafka from source and lints the adapter behind the flag.
       - run: cargo clippy -p orderflow-server --features kafka --all-targets --locked
 
+  flows:
+    name: Postman scenario flows
+    runs-on: ubuntu-latest
+    needs: [test]
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build -p orderflow-server --locked
+      # Throwaway credentials that live only on this runner.
+      - name: Start the server
+        run: |
+          printf 'ORDERFLOW_API_CREDENTIALS=trader-a-key:trader-a:%s,trader-b-key:trader-b:%s\n' \
+            "$(openssl rand -hex 32)" "$(openssl rand -hex 32)" > .env
+          ./scripts/postman-env.sh
+          ./target/debug/orderflow > server.log 2>&1 &
+          for _ in $(seq 1 30); do curl -sf localhost:8080/health/ready && exit 0; sleep 1; done
+          cat server.log
+          exit 1
+      - run: make flows
+
   supply-chain:
     name: Advisories, licenses and sources
     runs-on: ubuntu-latest

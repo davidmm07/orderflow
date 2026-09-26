@@ -1,0 +1,3640 @@
+{
+  "info": {
+    "_postman_id": "8abc1403-0272-585b-bbeb-73d976a09676",
+    "name": "Orderflow scenarios",
+    "description": "Scenario flows for the Orderflow API. Each folder is one flow that runs top to bottom, checks every response and passes ids to the next request through collection variables.\n\nSetup: run `make postman-env` to write postman/local.postman_environment.json from your .env, import that environment and this collection, start the server, then run a folder or the whole collection with the Collection Runner. From a terminal: `make flows`.\n\nPrivate requests are signed by the collection pre-request script. Each flow uses its own market and cancels what it leaves behind, so flows can run again on the same server.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Signs private requests with HMAC-SHA256, the same way the server checks them:",
+          "// hex(HMAC_SHA256(secret, timestamp + METHOD + path_and_query + body)).",
+          "// A request is private when it has an x-orderflow-key header. Tests of the",
+          "// auth failures preset x-orderflow-timestamp or x-orderflow-signature, and",
+          "// this script keeps whatever they preset.",
+          "const keyHeader = pm.request.headers.get('x-orderflow-key');",
+          "if (keyHeader) {",
+          "    const key = pm.variables.replaceIn(keyHeader);",
+          "    const secrets = {};",
+          "    secrets[pm.variables.get('trader_a_key')] = pm.variables.get('trader_a_secret');",
+          "    secrets[pm.variables.get('trader_b_key')] = pm.variables.get('trader_b_secret');",
+          "    const secret = secrets[key] || '';",
+          "    if (!secret) {",
+          "        console.warn('No secret for key ' + key + '; the request goes out with an invalid signature.');",
+          "    }",
+          "    const preset = pm.request.headers.get('x-orderflow-timestamp');",
+          "    const timestamp = preset ? pm.variables.replaceIn(preset) : String(Math.floor(Date.now() / 1000));",
+          "    const path = pm.variables.replaceIn(pm.request.url.getPathWithQuery());",
+          "    const body = pm.request.body && pm.request.body.raw ? pm.variables.replaceIn(pm.request.body.raw) : '';",
+          "    const signature = CryptoJS.HmacSHA256(timestamp + pm.request.method + path + body, secret)",
+          "        .toString(CryptoJS.enc.Hex);",
+          "    pm.request.headers.upsert({ key: 'x-orderflow-timestamp', value: timestamp });",
+          "    if (!pm.request.headers.get('x-orderflow-signature')) {",
+          "        pm.request.headers.upsert({ key: 'x-orderflow-signature', value: signature });",
+          "    }",
+          "}"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.test('response carries a request id', function () {",
+          "    pm.expect(pm.response.headers.has('x-request-id')).to.be.true;",
+          "});"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "run_id",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "01 Discovery and health",
+      "description": "Public endpoints: probes, the instrument catalog and market data. No keys needed.",
+      "item": [
+        {
+          "name": "Liveness",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health/live",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "health",
+                "live"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('status is ok', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.status).to.eql('ok');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Readiness",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health/ready",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "health",
+                "ready"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('every engine is running', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.status).to.eql('ready');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List assets",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/assets",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "assets"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('catalog lists the configured assets', function () {",
+                  "    const body = pm.response.json();",
+                  "    const codes = body.assets.map(a => a.code);",
+                  "    pm.expect(codes.length).to.be.at.least(14);",
+                  "    pm.expect(codes).to.include.members(['BTC', 'ETH', 'USD', 'EUR', 'USDC']);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List markets",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/markets",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('all instruments are listed', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.markets.length).to.be.at.least(16);",
+                  "    pm.expect(body.markets.map(m => m.id)).to.include.members(['BTC-USD', 'ETH-BTC', 'USDT-USD']);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Filter markets by quote asset",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/markets?quote=EUR",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets"
+              ],
+              "query": [
+                {
+                  "key": "quote",
+                  "value": "EUR"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('only EUR markets', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.markets.map(m => m.id)).to.eql(['BTC-EUR', 'ETH-EUR']);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Filter markets by base asset",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/markets?base=ETH",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets"
+              ],
+              "query": [
+                {
+                  "key": "base",
+                  "value": "ETH"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('only ETH markets', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.markets.every(m => m.base === 'ETH')).to.be.true;",
+                  "    pm.expect(body.markets.length).to.eql(4);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get one market",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/ETH-BTC",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "ETH-BTC"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('cross pair parameters', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.base).to.eql('ETH');",
+                  "    pm.expect(body.quote).to.eql('BTC');",
+                  "    pm.expect(body.tick_size).to.eql('0.00001');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Order book snapshot",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/BTC-USD/book?depth=5",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "BTC-USD",
+                "book"
+              ],
+              "query": [
+                {
+                  "key": "depth",
+                  "value": "5"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('snapshot shape', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.market).to.eql('BTC-USD');",
+                  "    pm.expect(body).to.have.property('sequence');",
+                  "    pm.expect(body).to.have.property('last_price');",
+                  "    pm.expect(body.bids).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Prometheus metrics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/metrics",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "metrics"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('exposes engine metrics', function () {",
+                  "    pm.expect(pm.response.text()).to.include('orderflow_events_published_total');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02 Limit order lifecycle",
+      "description": "Trader A places a resting bid on LTC-USD, reads it back, checks that trader B cannot see or cancel it, then cancels it.",
+      "item": [
+        {
+          "name": "A places a resting limit bid",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/LTC-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "LTC-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"buy\", \"type\": \"limit\", \"price\": \"50.00\", \"quantity\": \"0.5\", \"client_order_id\": \"flow-ltc-bid\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('order rests on the book', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.order.status).to.eql('open');",
+                  "    pm.expect(body.order.price).to.eql('50');",
+                  "    pm.expect(body.fills).to.eql([]);",
+                  "    pm.expect(pm.response.headers.get('location')).to.include(body.order.id);",
+                  "});",
+                  "pm.collectionVariables.set('ltc_bid_id', pm.response.json().order.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A reads the order",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/LTC-USD/orders/{{ltc_bid_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "LTC-USD",
+                "orders",
+                "{{ltc_bid_id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('same order, still open', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.id).to.eql(pm.collectionVariables.get('ltc_bid_id'));",
+                  "    pm.expect(body.remaining_quantity).to.eql('0.5');",
+                  "    pm.expect(body.client_order_id).to.eql('flow-ltc-bid');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Book shows the bid",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/LTC-USD/book?depth=5",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "LTC-USD",
+                "book"
+              ],
+              "query": [
+                {
+                  "key": "depth",
+                  "value": "5"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('level at 50', function () {",
+                  "    const body = pm.response.json();",
+                  "    const level = body.bids.find(l => l.price === '50');",
+                  "    pm.expect(level, 'bid level at 50').to.exist;",
+                  "    pm.expect(Number(level.quantity)).to.be.at.least(0.5);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "B cannot read A's order",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_b_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/LTC-USD/orders/{{ltc_bid_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "LTC-USD",
+                "orders",
+                "{{ltc_bid_id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 404', function () { pm.response.to.have.status(404); });",
+                  "pm.test('problem code is order_not_found', function () {",
+                  "    pm.expect(pm.response.headers.get('content-type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().code).to.eql('order_not_found');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "B cannot cancel A's order",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_b_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/LTC-USD/orders/{{ltc_bid_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "LTC-USD",
+                "orders",
+                "{{ltc_bid_id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 404', function () { pm.response.to.have.status(404); });",
+                  "pm.test('problem code is order_not_found', function () {",
+                  "    pm.expect(pm.response.headers.get('content-type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().code).to.eql('order_not_found');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A cancels the order",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/LTC-USD/orders/{{ltc_bid_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "LTC-USD",
+                "orders",
+                "{{ltc_bid_id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('order is cancelled', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.status).to.eql('cancelled');",
+                  "    pm.expect(body.cancel_reason).to.eql('requested');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancelling twice is a conflict",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/LTC-USD/orders/{{ltc_bid_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "LTC-USD",
+                "orders",
+                "{{ltc_bid_id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 409', function () { pm.response.to.have.status(409); });",
+                  "pm.test('problem code is order_not_open', function () {",
+                  "    pm.expect(pm.response.headers.get('content-type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().code).to.eql('order_not_open');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "03 Matching and partial fills",
+      "description": "A rests an ask on ETH-USD, B takes part of it with a limit order and the rest with a market order. Trades happen at the maker's price.",
+      "item": [
+        {
+          "name": "A rests an ask of 2 at 3000",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/ETH-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "ETH-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"sell\", \"type\": \"limit\", \"price\": \"3000\", \"quantity\": \"2\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('ask is open', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.order.status).to.eql('open');",
+                  "});",
+                  "pm.collectionVariables.set('eth_ask_id', pm.response.json().order.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "B buys 0.5 with a higher limit",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_b_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/ETH-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "ETH-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"buy\", \"type\": \"limit\", \"price\": \"3005\", \"quantity\": \"0.5\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('filled at the maker price', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.order.status).to.eql('filled');",
+                  "    pm.expect(body.fills.length).to.eql(1);",
+                  "    pm.expect(body.fills[0].price).to.eql('3000');",
+                  "    pm.expect(body.fills[0].quantity).to.eql('0.5');",
+                  "    pm.expect(body.fills[0].liquidity).to.eql('taker');",
+                  "    pm.expect(body.fills[0].counterparty_order_id).to.eql(pm.collectionVariables.get('eth_ask_id'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A's ask is partially filled",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/ETH-USD/orders/{{eth_ask_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "ETH-USD",
+                "orders",
+                "{{eth_ask_id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('1.5 remaining', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.status).to.eql('partially_filled');",
+                  "    pm.expect(body.filled_quantity).to.eql('0.5');",
+                  "    pm.expect(body.remaining_quantity).to.eql('1.5');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "B takes the rest with a market order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_b_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/ETH-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "ETH-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"buy\", \"type\": \"market\", \"quantity\": \"1.5\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('market order filled', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.order.status).to.eql('filled');",
+                  "    pm.expect(body.order.type).to.eql('market');",
+                  "    pm.expect(body.fills[0].price).to.eql('3000');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A's ask is filled",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/ETH-USD/orders/{{eth_ask_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "ETH-USD",
+                "orders",
+                "{{eth_ask_id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('fully filled', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.status).to.eql('filled');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Book reports the last trade price",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/ETH-USD/book",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "ETH-USD",
+                "book"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('last price is 3000', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.last_price).to.eql('3000');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "04 Time in force: IOC, FOK and market",
+      "description": "Immediate-or-cancel fills what it can, fill-or-kill fills everything or nothing, and a market order with no liquidity is cancelled. Runs on SOL-USD.",
+      "item": [
+        {
+          "name": "A rests an ask of 1 at 150",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/SOL-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "SOL-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"sell\", \"type\": \"limit\", \"price\": \"150\", \"quantity\": \"1\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "B sends IOC for 3",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_b_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/SOL-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "SOL-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"buy\", \"type\": \"limit\", \"price\": \"150\", \"quantity\": \"3\", \"time_in_force\": \"ioc\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('fills 1 and cancels the rest', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.order.status).to.eql('cancelled');",
+                  "    pm.expect(body.order.cancel_reason).to.eql('immediate_or_cancel');",
+                  "    pm.expect(body.order.filled_quantity).to.eql('1');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A rests another ask of 1 at 150",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/SOL-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "SOL-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"sell\", \"type\": \"limit\", \"price\": \"150\", \"quantity\": \"1\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('sol_ask_id', pm.response.json().order.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "B sends FOK for 2",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_b_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/SOL-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "SOL-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"buy\", \"type\": \"limit\", \"price\": \"150\", \"quantity\": \"2\", \"time_in_force\": \"fok\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('nothing fills', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.order.status).to.eql('cancelled');",
+                  "    pm.expect(body.order.cancel_reason).to.eql('fill_or_kill');",
+                  "    pm.expect(body.order.filled_quantity).to.eql('0');",
+                  "    pm.expect(body.fills).to.eql([]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A's ask is untouched",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/SOL-USD/orders/{{sol_ask_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "SOL-USD",
+                "orders",
+                "{{sol_ask_id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('still open', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.status).to.eql('open');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "B sends FOK for 1",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_b_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/SOL-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "SOL-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"buy\", \"type\": \"limit\", \"price\": \"150\", \"quantity\": \"1\", \"time_in_force\": \"fok\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('fills completely', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.order.status).to.eql('filled');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "B sends a market buy into an empty ask side",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_b_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/SOL-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "SOL-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"buy\", \"type\": \"market\", \"quantity\": \"0.5\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('cancelled for lack of liquidity', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.order.status).to.eql('cancelled');",
+                  "    pm.expect(body.order.cancel_reason).to.eql('no_liquidity');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "05 Post-only and self-trade prevention",
+      "description": "Post-only orders never take liquidity, and an account never trades with itself. Runs on AVAX-USD and cancels everything it leaves behind.",
+      "item": [
+        {
+          "name": "A rests an ask of 1 at 30",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/AVAX-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "AVAX-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"sell\", \"type\": \"limit\", \"price\": \"30\", \"quantity\": \"1\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('avax_ask_id', pm.response.json().order.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "B post-only bid at the ask is rejected",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_b_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/AVAX-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "AVAX-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"buy\", \"type\": \"limit\", \"price\": \"30\", \"quantity\": \"1\", \"post_only\": true}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 409', function () { pm.response.to.have.status(409); });",
+                  "pm.test('problem code is post_only_would_cross', function () {",
+                  "    pm.expect(pm.response.headers.get('content-type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().code).to.eql('post_only_would_cross');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "B post-only bid below the ask rests",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_b_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/AVAX-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "AVAX-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"buy\", \"type\": \"limit\", \"price\": \"29.99\", \"quantity\": \"1\", \"post_only\": true}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('bid is open', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.order.status).to.eql('open');",
+                  "});",
+                  "pm.collectionVariables.set('avax_b_bid_id', pm.response.json().order.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A crossing its own ask cancels the new order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/AVAX-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "AVAX-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"buy\", \"type\": \"limit\", \"price\": \"30\", \"quantity\": \"1\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('cancel_newest is the default', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.order.status).to.eql('cancelled');",
+                  "    pm.expect(body.order.cancel_reason).to.eql('self_trade_prevention');",
+                  "    pm.expect(body.fills).to.eql([]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A's ask is still open",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/AVAX-USD/orders/{{avax_ask_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "AVAX-USD",
+                "orders",
+                "{{avax_ask_id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('resting order kept', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.status).to.eql('open');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A crosses again with cancel_oldest",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/AVAX-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "AVAX-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"buy\", \"type\": \"limit\", \"price\": \"30\", \"quantity\": \"1\", \"self_trade_prevention\": \"cancel_oldest\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('old ask removed, new bid rests', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.order.status).to.eql('open');",
+                  "    pm.expect(body.fills).to.eql([]);",
+                  "});",
+                  "pm.collectionVariables.set('avax_a_bid_id', pm.response.json().order.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A's old ask was cancelled",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/AVAX-USD/orders/{{avax_ask_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "AVAX-USD",
+                "orders",
+                "{{avax_ask_id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('cancelled by self-trade prevention', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.status).to.eql('cancelled');",
+                  "    pm.expect(body.cancel_reason).to.eql('self_trade_prevention');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Clean up: A cancels its bid",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/AVAX-USD/orders/{{avax_a_bid_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "AVAX-USD",
+                "orders",
+                "{{avax_a_bid_id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Clean up: B cancels its bid",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_b_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/AVAX-USD/orders/{{avax_b_bid_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "AVAX-USD",
+                "orders",
+                "{{avax_b_bid_id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "06 Stop orders",
+      "description": "Stop orders wait outside the book until a trade reaches their stop price. The flow sets the last price with a trade, places a buy stop-limit and a sell stop-market, moves the price through both, and cleans up. Runs on LINK-USD.",
+      "item": [
+        {
+          "name": "A rests an ask of 1 at 20",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/LINK-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "LINK-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"sell\", \"type\": \"limit\", \"price\": \"20\", \"quantity\": \"1\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "B trades it, setting the last price to 20",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_b_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/LINK-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "LINK-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"buy\", \"type\": \"limit\", \"price\": \"20\", \"quantity\": \"1\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('filled', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.order.status).to.eql('filled');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Book reports last price 20",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/LINK-USD/book",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "LINK-USD",
+                "book"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('last price', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.last_price).to.eql('20');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "B places a buy stop-limit at 21",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_b_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/LINK-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "LINK-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"buy\", \"type\": \"stop_limit\", \"stop_price\": \"21\", \"price\": \"21.5\", \"quantity\": \"1\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('stop waits', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.order.status).to.eql('pending');",
+                  "    pm.expect(body.order.type).to.eql('stop_limit');",
+                  "    pm.expect(body.order.stop_price).to.eql('21');",
+                  "});",
+                  "pm.collectionVariables.set('link_stop_buy_id', pm.response.json().order.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Buy stop below the last price is rejected",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_b_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/LINK-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "LINK-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"buy\", \"type\": \"stop_market\", \"stop_price\": \"19\", \"quantity\": \"1\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 409', function () { pm.response.to.have.status(409); });",
+                  "pm.test('problem code is stop_would_trigger_immediately', function () {",
+                  "    pm.expect(pm.response.headers.get('content-type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().code).to.eql('stop_would_trigger_immediately');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Pending stops are not in the book",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/LINK-USD/book",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "LINK-USD",
+                "book"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('no bid at 21.5', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.bids.find(l => l.price === '21.5')).to.be.undefined;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A rests an ask of 2 at 21",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/LINK-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "LINK-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"sell\", \"type\": \"limit\", \"price\": \"21\", \"quantity\": \"2\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('link_ask_id', pm.response.json().order.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "B buys 0.5 at 21, which fires the stop",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_b_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/LINK-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "LINK-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"buy\", \"type\": \"limit\", \"price\": \"21\", \"quantity\": \"0.5\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('trigger order filled', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.order.status).to.eql('filled');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "B's stop fired and filled at 21",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_b_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/LINK-USD/orders/{{link_stop_buy_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "LINK-USD",
+                "orders",
+                "{{link_stop_buy_id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('stop filled', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.status).to.eql('filled');",
+                  "    pm.expect(body.filled_quantity).to.eql('1');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A's ask was hit by both orders",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/LINK-USD/orders/{{link_ask_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "LINK-USD",
+                "orders",
+                "{{link_ask_id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('0.5 left', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.status).to.eql('partially_filled');",
+                  "    pm.expect(body.remaining_quantity).to.eql('0.5');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A places a sell stop-market at 20.5",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/LINK-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "LINK-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"sell\", \"type\": \"stop_market\", \"stop_price\": \"20.5\", \"quantity\": \"0.5\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('stop waits', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.order.status).to.eql('pending');",
+                  "});",
+                  "pm.collectionVariables.set('link_stop_sell_id', pm.response.json().order.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "B rests a bid of 1 at 20",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_b_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/LINK-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "LINK-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"buy\", \"type\": \"limit\", \"price\": \"20\", \"quantity\": \"1\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('link_bid_id', pm.response.json().order.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A sells 0.2 at 20, which fires the sell stop",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/LINK-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "LINK-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"sell\", \"type\": \"limit\", \"price\": \"20\", \"quantity\": \"0.2\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('filled', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.order.status).to.eql('filled');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A's sell stop fired and filled",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/LINK-USD/orders/{{link_stop_sell_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "LINK-USD",
+                "orders",
+                "{{link_stop_sell_id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('stop filled', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.status).to.eql('filled');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "B's bid absorbed both sells",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_b_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/LINK-USD/orders/{{link_bid_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "LINK-USD",
+                "orders",
+                "{{link_bid_id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('0.3 left', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.status).to.eql('partially_filled');",
+                  "    pm.expect(body.remaining_quantity).to.eql('0.3');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A places a far sell stop",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/LINK-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "LINK-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"sell\", \"type\": \"stop_market\", \"stop_price\": \"15\", \"quantity\": \"0.5\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.collectionVariables.set('link_far_stop_id', pm.response.json().order.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A cancels the pending stop",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/LINK-USD/orders/{{link_far_stop_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "LINK-USD",
+                "orders",
+                "{{link_far_stop_id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('cancelled before firing', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.status).to.eql('cancelled');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Clean up: A cancels its ask",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/LINK-USD/orders/{{link_ask_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "LINK-USD",
+                "orders",
+                "{{link_ask_id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Clean up: B cancels its bid",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_b_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/LINK-USD/orders/{{link_bid_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "LINK-USD",
+                "orders",
+                "{{link_bid_id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "07 Idempotent retries",
+      "description": "A retry with the same Idempotency-Key returns the original order instead of placing a second one. Runs on BTC-USD.",
+      "item": [
+        {
+          "name": "A places an order with a key",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run_id}}-idem"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/BTC-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "BTC-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"buy\", \"type\": \"limit\", \"price\": \"20000\", \"quantity\": \"0.01\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('run_id', Date.now().toString(36));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('not a replay', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(pm.response.headers.has('idempotent-replayed')).to.be.false;",
+                  "});",
+                  "pm.collectionVariables.set('btc_idem_id', pm.response.json().order.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Retrying returns the same order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run_id}}-idem"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/BTC-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "BTC-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"buy\", \"type\": \"limit\", \"price\": \"20000\", \"quantity\": \"0.01\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () { pm.response.to.have.status(201); });",
+                  "pm.test('replayed response', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(pm.response.headers.get('idempotent-replayed')).to.eql('true');",
+                  "    pm.expect(body.order.id).to.eql(pm.collectionVariables.get('btc_idem_id'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Same key with another body is rejected",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run_id}}-idem"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/BTC-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "BTC-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"buy\", \"type\": \"limit\", \"price\": \"20001\", \"quantity\": \"0.01\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 422', function () { pm.response.to.have.status(422); });",
+                  "pm.test('problem code is idempotency_key_reused', function () {",
+                  "    pm.expect(pm.response.headers.get('content-type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().code).to.eql('idempotency_key_reused');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Malformed key is rejected",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "has spaces"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/BTC-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "BTC-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"buy\", \"type\": \"limit\", \"price\": \"20000\", \"quantity\": \"0.01\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 422', function () { pm.response.to.have.status(422); });",
+                  "pm.test('problem code is validation_failed', function () {",
+                  "    pm.expect(pm.response.headers.get('content-type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().code).to.eql('validation_failed');",
+                  "});",
+                  "pm.test('field errors: Idempotency-Key', function () {",
+                  "    pm.expect(pm.response.json().errors.map(e => e.field)).to.eql(['Idempotency-Key']);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Clean up: A cancels the order",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/BTC-USD/orders/{{btc_idem_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "BTC-USD",
+                "orders",
+                "{{btc_idem_id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "08 Authentication and validation errors",
+      "description": "Every failure is an RFC 9457 problem document with a stable code. None of these requests changes any state.",
+      "item": [
+        {
+          "name": "Unsigned request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/BTC-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "BTC-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"buy\", \"type\": \"limit\", \"price\": \"100\", \"quantity\": \"1\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 401', function () { pm.response.to.have.status(401); });",
+                  "pm.test('problem code is unauthenticated', function () {",
+                  "    pm.expect(pm.response.headers.get('content-type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().code).to.eql('unauthenticated');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Forged signature",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              },
+              {
+                "key": "x-orderflow-signature",
+                "value": "0000000000000000000000000000000000000000000000000000000000000000"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/BTC-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "BTC-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"buy\", \"type\": \"limit\", \"price\": \"100\", \"quantity\": \"1\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 401', function () { pm.response.to.have.status(401); });",
+                  "pm.test('problem code is unauthenticated', function () {",
+                  "    pm.expect(pm.response.headers.get('content-type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().code).to.eql('unauthenticated');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Stale timestamp",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              },
+              {
+                "key": "x-orderflow-timestamp",
+                "value": "1000000000"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/BTC-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "BTC-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"buy\", \"type\": \"limit\", \"price\": \"100\", \"quantity\": \"1\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 401', function () { pm.response.to.have.status(401); });",
+                  "pm.test('problem code is unauthenticated', function () {",
+                  "    pm.expect(pm.response.headers.get('content-type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().code).to.eql('unauthenticated');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unknown key",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "unknown-key"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/BTC-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "BTC-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"buy\", \"type\": \"limit\", \"price\": \"100\", \"quantity\": \"1\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 401', function () { pm.response.to.have.status(401); });",
+                  "pm.test('problem code is unauthenticated', function () {",
+                  "    pm.expect(pm.response.headers.get('content-type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().code).to.eql('unauthenticated');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Every invalid field is reported",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/BTC-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "BTC-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"up\", \"type\": \"limit\", \"quantity\": \"-1\", \"self_trade_prevention\": \"maybe\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 422', function () { pm.response.to.have.status(422); });",
+                  "pm.test('problem code is validation_failed', function () {",
+                  "    pm.expect(pm.response.headers.get('content-type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().code).to.eql('validation_failed');",
+                  "});",
+                  "pm.test('field errors: side, quantity, price, self_trade_prevention', function () {",
+                  "    pm.expect(pm.response.json().errors.map(e => e.field)).to.eql(['side', 'quantity', 'price', 'self_trade_prevention']);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Price off the tick grid",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/BTC-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "BTC-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"buy\", \"type\": \"limit\", \"price\": \"100.001\", \"quantity\": \"1\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 422', function () { pm.response.to.have.status(422); });",
+                  "pm.test('problem code is validation_failed', function () {",
+                  "    pm.expect(pm.response.headers.get('content-type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().code).to.eql('validation_failed');",
+                  "});",
+                  "pm.test('tick error on price', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.errors[0].field).to.eql('price');",
+                  "    pm.expect(body.errors[0].code).to.eql('price_not_on_tick');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Market order with a price",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/BTC-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "BTC-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"buy\", \"type\": \"market\", \"price\": \"100\", \"quantity\": \"1\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 422', function () { pm.response.to.have.status(422); });",
+                  "pm.test('problem code is validation_failed', function () {",
+                  "    pm.expect(pm.response.headers.get('content-type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().code).to.eql('validation_failed');",
+                  "});",
+                  "pm.test('field errors: price', function () {",
+                  "    pm.expect(pm.response.json().errors.map(e => e.field)).to.eql(['price']);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Stop order without a stop price",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/BTC-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "BTC-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"buy\", \"type\": \"stop_limit\", \"price\": \"100\", \"quantity\": \"1\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 422', function () { pm.response.to.have.status(422); });",
+                  "pm.test('problem code is validation_failed', function () {",
+                  "    pm.expect(pm.response.headers.get('content-type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().code).to.eql('validation_failed');",
+                  "});",
+                  "pm.test('field errors: stop_price', function () {",
+                  "    pm.expect(pm.response.json().errors.map(e => e.field)).to.eql(['stop_price']);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unknown field",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/BTC-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "BTC-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"buy\", \"type\": \"market\", \"quantity\": \"1\", \"leverage\": 10}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 422', function () { pm.response.to.have.status(422); });",
+                  "pm.test('problem code is invalid_body', function () {",
+                  "    pm.expect(pm.response.headers.get('content-type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().code).to.eql('invalid_body');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Price sent as a JSON number",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/BTC-USD/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "BTC-USD",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"buy\", \"type\": \"limit\", \"price\": 100.5, \"quantity\": \"1\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 422', function () { pm.response.to.have.status(422); });",
+                  "pm.test('problem code is invalid_body', function () {",
+                  "    pm.expect(pm.response.headers.get('content-type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().code).to.eql('invalid_body');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unknown market",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-orderflow-key",
+                "value": "{{trader_a_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/DOGE-EUR/orders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "DOGE-EUR",
+                "orders"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"side\": \"buy\", \"type\": \"limit\", \"price\": \"1\", \"quantity\": \"10\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 404', function () { pm.response.to.have.status(404); });",
+                  "pm.test('problem code is unknown_market', function () {",
+                  "    pm.expect(pm.response.headers.get('content-type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().code).to.eql('unknown_market');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Book depth out of range",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/markets/BTC-USD/book?depth=0",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets",
+                "BTC-USD",
+                "book"
+              ],
+              "query": [
+                {
+                  "key": "depth",
+                  "value": "0"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 422', function () { pm.response.to.have.status(422); });",
+                  "pm.test('problem code is validation_failed', function () {",
+                  "    pm.expect(pm.response.headers.get('content-type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().code).to.eql('validation_failed');",
+                  "});",
+                  "pm.test('field errors: depth', function () {",
+                  "    pm.expect(pm.response.json().errors.map(e => e.field)).to.eql(['depth']);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Lowercase market filter",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/markets?base=btc",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets"
+              ],
+              "query": [
+                {
+                  "key": "base",
+                  "value": "btc"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 422', function () { pm.response.to.have.status(422); });",
+                  "pm.test('problem code is validation_failed', function () {",
+                  "    pm.expect(pm.response.headers.get('content-type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().code).to.eql('validation_failed');",
+                  "});",
+                  "pm.test('field errors: base', function () {",
+                  "    pm.expect(pm.response.json().errors.map(e => e.field)).to.eql(['base']);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unknown route",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/nothing-here",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "nothing-here"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 404', function () { pm.response.to.have.status(404); });",
+                  "pm.test('problem code is route_not_found', function () {",
+                  "    pm.expect(pm.response.headers.get('content-type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().code).to.eql('route_not_found');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Wrong method",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/markets",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "markets"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 405', function () { pm.response.to.have.status(405); });",
+                  "pm.test('problem code is method_not_allowed', function () {",
+                  "    pm.expect(pm.response.headers.get('content-type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().code).to.eql('method_not_allowed');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
