@@ -12,6 +12,8 @@ use orderflow_application::ApplicationError;
 use orderflow_domain::DomainError;
 use serde::Serialize;
 
+use crate::http_metrics::ProblemCode;
+
 pub const PROBLEM_JSON: &str = "application/problem+json";
 
 /// One invalid input, pointing at the field that caused it.
@@ -185,6 +187,7 @@ impl IntoResponse for ApiError {
             errors: &problem.errors,
         };
         let mut response = (problem.status, Json(body)).into_response();
+        response.extensions_mut().insert(ProblemCode(problem.code));
         let headers = response.headers_mut();
         headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(PROBLEM_JSON));
         if let Some(secs) = problem.retry_after {

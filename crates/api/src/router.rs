@@ -22,7 +22,7 @@ use crate::{
     auth,
     error::ApiError,
     handlers::{markets, ops, orders},
-    rate_limit,
+    http_metrics, rate_limit,
     state::AppState,
 };
 
@@ -81,6 +81,10 @@ pub fn router(state: AppState, config: &ApiConfig) -> Router {
                 .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
                 .layer(PropagateRequestIdLayer::x_request_id())
                 .layer(TraceLayer::new_for_http().make_span_with(request_span))
+                .layer(middleware::from_fn_with_state(
+                    state.http_metrics.clone(),
+                    http_metrics::record,
+                ))
                 .layer(CatchPanicLayer::custom(panic_response))
                 .layer(middleware::from_fn_with_state(
                     config.request_timeout,

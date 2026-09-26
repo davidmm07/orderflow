@@ -29,10 +29,11 @@ pub async fn ready(State(state): State<AppState>) -> (StatusCode, Json<StatusVie
     }
 }
 
-/// `GET /metrics` in the Prometheus text format.
+/// `GET /metrics` in the Prometheus text format: engine and runtime metrics
+/// followed by HTTP request metrics.
 pub async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
     (
         [(header::CONTENT_TYPE, "text/plain; version=0.0.4")],
-        (state.metrics)(),
+        format!("{}{}", (state.metrics)(), state.http_metrics.render()),
     )
 }

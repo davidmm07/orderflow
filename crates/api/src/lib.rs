@@ -18,6 +18,7 @@ mod dto;
 mod error;
 mod extract;
 mod handlers;
+mod http_metrics;
 mod rate_limit;
 mod router;
 mod state;
@@ -28,6 +29,7 @@ pub use auth::{
     sign_request,
 };
 pub use error::{ApiError, FieldError, PROBLEM_JSON};
+pub use http_metrics::HttpMetrics;
 pub use rate_limit::{RateLimitConfig, RateLimiter};
 pub use router::{ApiConfig, router};
 pub use state::{AppState, MetricsRender};

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use axum::Router;
-use orderflow_api::{ApiConfig, AppState, Authenticator, Credential, RateLimiter};
+use orderflow_api::{ApiConfig, AppState, Authenticator, Credential, HttpMetrics, RateLimiter};
 use orderflow_application::{
     CancelOrder, EventDispatcher, EventPublisher, MarketDeps, MarketRegistry, OrderQueries,
     OrderRepository, PlaceOrder, outbox, spawn_market,
@@ -91,6 +91,7 @@ pub fn build(settings: &Settings, catalog: InstrumentCatalog) -> anyhow::Result<
         )),
         rate_limiter: Arc::new(RateLimiter::new(settings.rate_limit)),
         metrics: Arc::new(move || metrics.render()),
+        http_metrics: Arc::new(HttpMetrics::new()),
     };
     let router = orderflow_api::router(
         state,

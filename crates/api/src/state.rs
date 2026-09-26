@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use orderflow_application::{CancelOrder, OrderQueries, PlaceOrder};
 
-use crate::{auth::Authenticator, rate_limit::RateLimiter};
+use crate::{auth::Authenticator, http_metrics::HttpMetrics, rate_limit::RateLimiter};
 
 /// Renders the metrics exposition. Supplied by the composition root so the
 /// API stays unaware of which metrics backend is in use.
@@ -18,5 +18,8 @@ pub struct AppState {
     pub queries: Arc<OrderQueries>,
     pub authenticator: Arc<Authenticator>,
     pub rate_limiter: Arc<RateLimiter>,
+    /// Engine and runtime metrics from the infrastructure adapter.
     pub metrics: MetricsRender,
+    /// Request metrics recorded by this crate's middleware.
+    pub http_metrics: Arc<HttpMetrics>,
 }

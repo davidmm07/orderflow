@@ -14,8 +14,8 @@ use axum::{
 };
 use http_body_util::BodyExt;
 use orderflow_api::{
-    API_KEY_HEADER, ApiConfig, AppState, Authenticator, Credential, PROBLEM_JSON, RateLimitConfig,
-    RateLimiter, SIGNATURE_HEADER, TIMESTAMP_HEADER, router, sign_request,
+    API_KEY_HEADER, ApiConfig, AppState, Authenticator, Credential, HttpMetrics, PROBLEM_JSON,
+    RateLimitConfig, RateLimiter, SIGNATURE_HEADER, TIMESTAMP_HEADER, router, sign_request,
 };
 use orderflow_application::{
     CancelOrder, EventDispatcher, MarketDeps, MarketRegistry, OrderQueries, PlaceOrder, outbox,
@@ -77,6 +77,7 @@ fn app_with(rate_limit: RateLimitConfig) -> Router {
         )),
         rate_limiter: Arc::new(RateLimiter::new(rate_limit)),
         metrics: Arc::new(move || metrics.render()),
+        http_metrics: Arc::new(HttpMetrics::new()),
     };
     router(
         state,
@@ -694,6 +695,49 @@ async fn instruments_can_be_discovered_and_filtered() {
         &send(&app, get("/v1/markets/DOGE-USD")).await,
         StatusCode::NOT_FOUND,
         "unknown_market",
+    );
+}
+
+#[tokio::test]
+async fn metrics_count_requests_by_route_template_and_problem_code() {
+    let app = app();
+    let unsigned = Request::builder()
+        .method("POST")
+        .uri(ORDERS)
+        .body(Body::empty())
+        .unwrap();
+    send(&app, unsigned).await;
+    send(
+        &app,
+        ALICE.request("POST", ORDERS, Some(limit("buy", "90", "1"))),
+    )
+    .await;
+    send(&app, get("/v1/markets/ETH-USD")).await;
+    send(&app, get("/no/such/route/12345")).await;
+
+    let reply = app.clone().oneshot(get("/metrics")).await.unwrap();
+    let text = String::from_utf8(
+        reply
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec(),
+    )
+    .unwrap();
+    for line in [
+        r#"orderflow_http_requests_total{method="POST",route="/v1/markets/{market}/orders",status="401"} 1"#,
+        r#"orderflow_http_requests_total{method="POST",route="/v1/markets/{market}/orders",status="201"} 1"#,
+        r#"orderflow_http_problems_total{route="/v1/markets/{market}/orders",code="unauthenticated"} 1"#,
+        r#"orderflow_http_requests_total{method="GET",route="/v1/markets/{market}",status="200"} 1"#,
+        r#"orderflow_http_problems_total{route="unmatched",code="route_not_found"} 1"#,
+    ] {
+        assert!(text.contains(line), "missing {line}\n{text}");
+    }
+    assert!(
+        !text.contains("12345"),
+        "raw paths must never become labels"
     );
 }
 
