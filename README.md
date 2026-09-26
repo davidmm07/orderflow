@@ -491,6 +491,14 @@ unlimited time series.
 `make up` starts Prometheus and Grafana next to the service, configured
 from files in [`deploy/`](deploy):
 
+![Orderflow dashboard in Grafana during five minutes of mixed trading traffic on six markets](docs/images/grafana-dashboard.png)
+
+*Five minutes of generated traffic on six markets: about 16 orders and 11
+trades per second, p99 matching latency of 92 us, no dropped events and no
+firing alerts. The HTTP panels show the rejections a real exchange sees:
+cancels of orders that already filled, stops placed too close to the
+market, invalid prices and clients with broken signatures.*
+
 | URL | What is there |
 |---|---|
 | http://127.0.0.1:3000/d/orderflow | Grafana dashboard: health stats, orders and trades by market, matching latency, event pipeline, HTTP status codes, problems by code, route latency, load shedding and rate limits. Filter by market at the top. |
@@ -622,6 +630,7 @@ crates/
 config/instruments.json  assets and markets
 deploy/             Prometheus config, alert rules and tests, Grafana provisioning and dashboard
 docs/adr/           architecture decision records
+docs/images/        README screenshots
 docs/openapi.yaml   API contract
 docs/errors.md      error catalog
 postman/            scenario flows (Collection v3 YAML), environment template
