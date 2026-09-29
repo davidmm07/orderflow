@@ -136,61 +136,79 @@ service would not need that. The core of an exchange does.
 
 ### Dependency rule
 
-```
-                +-------------------------------+
-                |        orderflow-server        |  composition root, config,
-                |  (the only crate that sees     |  lifecycle, telemetry
-                |   every concrete type)         |
-                +-------------------------------+
-                     |                     |
-                     v                     v
-     +---------------------+     +-------------------------+
-     |    orderflow-api    |     | orderflow-infrastructure|
-     | HTTP, auth, limits, |     | stores, clock, ids,     |
-     | validation, errors  |     | metrics, Kafka, retries |
-     +---------------------+     +-------------------------+
-                     |                     |
-                     v                     v
-                +-------------------------------+
-                |     orderflow-application      |  use cases, ports,
-                |                                |  market actors, outbox
-                +-------------------------------+
-                               |
-                               v
-                +-------------------------------+
-                |       orderflow-domain         |  order book, matching,
-                |    (no async, no IO, no deps   |  value objects, events
-                |     beyond decimal and uuid)   |
-                +-------------------------------+
+Arrows point from a crate to the crates it depends on.
+
+```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 400}}}%%
+flowchart TD
+    server["<b>orderflow-server</b><br/>composition root, config, lifecycle, telemetry<br/><i>the only crate that sees every concrete type</i>"]
+    api["<b>orderflow-api</b><br/>HTTP, auth, rate limits,<br/>validation, errors"]
+    infra["<b>orderflow-infrastructure</b><br/>implements the ports: stores, clock,<br/>ids, metrics, Kafka, retries"]
+    app["<b>orderflow-application</b><br/>use cases, ports, market actors, outbox"]
+    domain["<b>orderflow-domain</b><br/>order book, matching, value objects, events<br/><i>no async, no IO,<br/>no dependencies beyond decimal and uuid</i>"]
+
+    server --> api
+    server --> infra
+    api --> app
+    infra --> app
+    app --> domain
+
+    classDef core fill:#fff4d6,stroke:#b8860b,stroke-width:2px,color:#000
+    classDef ring fill:#e8f1fb,stroke:#3a6ea5,color:#000
+    classDef root fill:#eeeeee,stroke:#555,color:#000
+    class domain core
+    class app,api,infra ring
+    class server root
 ```
 
 ### Life of an order
 
-```
-client
-  | POST /v1/markets/BTC-USD/orders  (signed)
-  v
-router: request id -> trace span -> panic guard -> timeout
-  v
-auth: buffer body (capped) -> verify HMAC in constant time -> account
-  v
-rate limit: token bucket for that account
-  v
-handler: parse JSON -> validate every field -> PlaceOrderCommand
-  v
-PlaceOrder use case (runs on its own task so a disconnect cannot cut it short)
-  | idempotency reserve
-  v
-MarketHandle --try_send--> [bounded queue] --> market actor (single writer)
-                                                   | MatchingEngine::submit
-                                                   | events -> outbox (bounded)
-                                                   | orders -> read model
-  <------------------ reply (oneshot) -------------+
-  | idempotency complete
-  v
-201 Created + Location + fills
+Dashed arrows are responses. The `alt` boxes are the ways a request is
+turned away before it reaches the matching engine.
 
-outbox --> dispatcher (batches) --> retry decorator --> Kafka (key = market)
+```mermaid
+sequenceDiagram
+    actor C as Client
+    participant R as Router layers<br/>request id, tracing,<br/>panic guard, timeout
+    participant S as Auth and<br/>rate limit
+    participant H as Handler
+    participant U as PlaceOrder<br/>(own task)
+    participant A as Market actor<br/>(single writer)
+    participant O as Outbox
+    participant D as Dispatcher
+    participant K as Kafka
+
+    C->>R: POST /v1/markets/BTC-USD/orders (signed)
+    R->>S: request
+    S->>S: buffer the body (capped),<br/>verify the HMAC in constant time
+    alt bad signature, stale timestamp or unknown key
+        S-->>C: 401 unauthenticated
+    else token bucket of the account is empty
+        S-->>C: 429 rate_limited, Retry-After
+    end
+    S->>H: authenticated request
+    H->>H: parse JSON, validate every field
+    alt any field invalid
+        H-->>C: 422 validation_failed, every field listed
+    end
+    H->>U: PlaceOrderCommand
+    U->>U: reserve the Idempotency-Key
+    U->>A: try_send to the bounded market queue
+    alt queue full
+        U-->>H: Overloaded
+        H-->>C: 503 market_overloaded, Retry-After
+    end
+    Note over A: MatchingEngine::submit,<br/>then the stop cascade
+    A->>O: events (waits if the outbox is full)
+    A->>A: update the order read model
+    A-->>U: outcome (oneshot reply)
+    U->>U: record the result under the key
+    U-->>H: receipt
+    H-->>C: 201 Created, Location, fills
+
+    Note over O,K: asynchronous, off the matching path
+    O->>D: queued batches
+    D->>K: publish with retries and jitter, key = market
 ```
 
 ### Crates
