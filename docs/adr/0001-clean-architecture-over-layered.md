@@ -53,9 +53,9 @@ flowchart TD
     infra --> app
     app --> domain
 
-    classDef core fill:#fff4d6,stroke:#b8860b,stroke-width:2px,color:#000
-    classDef ring fill:#e8f1fb,stroke:#3a6ea5,color:#000
-    classDef root fill:#eeeeee,stroke:#555,color:#000
+    classDef core fill:#7a4a00,stroke:#f0a830,stroke-width:3px,color:#fff
+    classDef ring fill:#1f4e79,stroke:#5b9bd5,stroke-width:2px,color:#fff
+    classDef root fill:#37474f,stroke:#90a4ae,stroke-width:2px,color:#fff
     class domain core
     class app,api,infra ring
     class server root
