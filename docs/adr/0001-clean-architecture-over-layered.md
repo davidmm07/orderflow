@@ -35,19 +35,30 @@ The forces that matter for this system:
 
 ## Decision
 
-Use clean architecture, with one Cargo crate per ring:
+Use clean architecture, with one Cargo crate per ring. Arrows point from a
+crate to the crates it depends on:
 
-```
-orderflow-server          composition root (the only crate that sees everything)
-    |
-    +--> orderflow-api             delivery: HTTP, auth, validation, error mapping
-    +--> orderflow-infrastructure  adapters: stores, clock, ids, metrics, Kafka
-              |
-              v
-         orderflow-application     use cases, ports, market actors, outbox
-              |
-              v
-         orderflow-domain          entities, value objects, matching engine
+```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 400}}}%%
+flowchart TD
+    server["<b>orderflow-server</b><br/>composition root<br/><i>the only crate that sees everything</i>"]
+    api["<b>orderflow-api</b><br/>delivery: HTTP, auth,<br/>validation, error mapping"]
+    infra["<b>orderflow-infrastructure</b><br/>adapters: stores, clock,<br/>ids, metrics, Kafka"]
+    app["<b>orderflow-application</b><br/>use cases, ports,<br/>market actors, outbox"]
+    domain["<b>orderflow-domain</b><br/>entities, value objects,<br/>matching engine"]
+
+    server --> api
+    server --> infra
+    api --> app
+    infra --> app
+    app --> domain
+
+    classDef core fill:#fff4d6,stroke:#b8860b,stroke-width:2px,color:#000
+    classDef ring fill:#e8f1fb,stroke:#3a6ea5,color:#000
+    classDef root fill:#eeeeee,stroke:#555,color:#000
+    class domain core
+    class app,api,infra ring
+    class server root
 ```
 
 Cargo enforces the dependency rule. `orderflow-domain` lists only

@@ -19,8 +19,14 @@ change in step 12.
 Orderflow is a matching engine for spot markets such as `BTC-USD`, with an
 HTTP API in front and an event stream behind.
 
-```
-clients --HTTP (signed)--> orderflow --events--> Kafka topic --> ledger, market data, risk...
+```mermaid
+flowchart LR
+    clients([Clients]) -- "HTTP, signed" --> orderflow["<b>Orderflow</b><br/>matching engine and API"]
+    orderflow -- events --> topic[("Kafka topic<br/>orderflow.events.v1")]
+    topic --> ledger[Ledger and settlement]
+    topic --> data[Market data]
+    topic --> risk[Risk and surveillance]
+    topic --> more[Other consumers]
 ```
 
 Keep three design rules in mind while you read the code:
