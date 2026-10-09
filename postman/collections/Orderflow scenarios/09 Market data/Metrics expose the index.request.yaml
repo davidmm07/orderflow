@@ -1,0 +1,14 @@
+$kind: http-request
+url: '{{pricefeed_url}}/metrics'
+method: GET
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 200', function () { pm.response.to.have.status(200); });
+    pm.test('Prometheus text with index and WebSocket series', function () {
+        const text = pm.response.text();
+        pm.expect(text).to.include('# TYPE pricefeed_index_updates_total counter');
+        pm.expect(text).to.include('pricefeed_ws_connections');
+    });
+  language: text/javascript
+order: 10000

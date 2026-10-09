@@ -1,0 +1,23 @@
+$kind: http-request
+url: '{{pricefeed_url}}/v1/prices'
+method: GET
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 200', function () { pm.response.to.have.status(200); });
+    pm.test('prices are short-lived cacheable public data', function () {
+        pm.expect(pm.response.headers.get('cache-control')).to.eql('public, max-age=1');
+    });
+    pm.test('every price is well formed', function () {
+        const prices = pm.response.json().prices;
+        pm.expect(prices).to.be.an('array');
+        prices.forEach(function (p) {
+            pm.expect(p.market).to.match(/^[A-Z0-9]{2,10}-[A-Z0-9]{2,10}$/);
+            // Decimals travel as strings so no precision is lost in transit.
+            pm.expect(p.price).to.be.a('string').and.match(/^[0-9]+(\.[0-9]+)?$/);
+            pm.expect(['live', 'degraded', 'stale']).to.include(p.status);
+            pm.expect(p.sequence).to.be.above(0);
+        });
+    });
+  language: text/javascript
+order: 2000

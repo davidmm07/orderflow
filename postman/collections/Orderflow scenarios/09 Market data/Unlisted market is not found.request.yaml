@@ -1,0 +1,12 @@
+$kind: http-request
+url: '{{pricefeed_url}}/v1/prices/XYZ-USD'
+method: GET
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 404', function () { pm.response.to.have.status(404); });
+    pm.test('problem code is market_not_found', function () {
+        pm.expect(pm.response.json().code).to.eql('market_not_found');
+    });
+  language: text/javascript
+order: 8000

@@ -1,0 +1,6 @@
+$kind: collection
+description: |-
+  The price feed (crates/pricefeed, port 8090): index prices aggregated from exchanges, CoinGecko and on-chain pools, candles, the source breakdown and its error contract. Read-only.
+
+  Start it with `make run-pricefeed` or `make up`. The flow passes whether the feed is warm or has not published a price yet; a fresh start takes a few seconds to fill. The URL comes from `pricefeed_url`, default http://127.0.0.1:8090.
+order: 9000

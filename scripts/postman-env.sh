@@ -9,6 +9,7 @@
 #   ENV_FILE       source of the credentials (default: .env)
 #   OUTPUT         environment file to write (default: postman/environments/orderflow-local.environment.yaml)
 #   ORDERFLOW_URL  server base URL           (default: from ORDERFLOW_BIND_ADDR)
+#   PRICEFEED_URL  price feed base URL       (default: from PRICEFEED_BIND_ADDR)
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -34,6 +35,8 @@ fi
 
 bind=$(value ORDERFLOW_BIND_ADDR)
 base_url=${ORDERFLOW_URL:-http://${bind:-127.0.0.1:8080}}
+pricefeed_bind=$(value PRICEFEED_BIND_ADDR)
+pricefeed_url=${PRICEFEED_URL:-http://${pricefeed_bind:-127.0.0.1:8090}}
 
 field() {
   local entry=$1 index=$2
@@ -51,6 +54,8 @@ name: Orderflow local
 values:
   - key: base_url
     value: '${base_url}'
+  - key: pricefeed_url
+    value: '${pricefeed_url}'
   - key: trader_a_key
     value: '$(field "${entries[0]}" key)'
   - key: trader_a_secret

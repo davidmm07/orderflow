@@ -1,0 +1,15 @@
+$kind: http-request
+url: '{{pricefeed_url}}/v1/prices/BTC-USD/candles?interval=2m&limit=0'
+method: GET
+queryParams:
+  interval: '2m'
+  limit: '0'
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 422', function () { pm.response.to.have.status(422); });
+    pm.test('field errors: interval, limit', function () {
+        pm.expect(pm.response.json().errors.map(e => e.field)).to.eql(['interval', 'limit']);
+    });
+  language: text/javascript
+order: 9000

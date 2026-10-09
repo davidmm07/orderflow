@@ -1,0 +1,15 @@
+$kind: http-request
+url: '{{pricefeed_url}}/v1/prices?markets=BTC-USD,ETH-USDC'
+method: GET
+queryParams:
+  markets: 'BTC-USD,ETH-USDC'
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 200', function () { pm.response.to.have.status(200); });
+    pm.test('only the requested markets', function () {
+        const markets = pm.response.json().prices.map(function (p) { return p.market; });
+        markets.forEach(function (m) { pm.expect(['BTC-USD', 'ETH-USDC']).to.include(m); });
+    });
+  language: text/javascript
+order: 3000

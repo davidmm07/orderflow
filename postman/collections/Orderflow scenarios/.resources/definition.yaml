@@ -2,10 +2,13 @@ $kind: collection
 description: |-
   Scenario flows for the Orderflow API. Each folder is one flow that runs top to bottom, checks every response and passes ids to the next request through collection variables.
 
+  Flow 09 covers the price feed (port 8090) and needs no credentials.
+
   Setup: open the repository root folder in Postman (Files, Open folder, Local View), run `make postman-env` to write the `Orderflow local` environment from your .env, select it, start the server, then run a folder or the whole collection with the Collection Runner. From a terminal: `make flows`.
 
   Private requests are signed by the collection pre-request script. Each flow uses its own market and cancels what it leaves behind, so flows can run again on the same server.
 variables:
+  pricefeed_url: http://127.0.0.1:8090
   run_id: ""
   link_stop_buy_id: ""
   ltc_bid_id: ""

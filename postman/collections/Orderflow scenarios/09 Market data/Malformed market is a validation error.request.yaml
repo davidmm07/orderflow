@@ -1,0 +1,16 @@
+$kind: http-request
+url: '{{pricefeed_url}}/v1/prices?markets=btc'
+method: GET
+queryParams:
+  markets: 'btc'
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 422', function () { pm.response.to.have.status(422); });
+    pm.test('problem code is validation_failed', function () {
+        pm.expect(pm.response.headers.get('content-type')).to.include('application/problem+json');
+        pm.expect(pm.response.json().code).to.eql('validation_failed');
+        pm.expect(pm.response.json().errors[0].code).to.eql('invalid_market');
+    });
+  language: text/javascript
+order: 7000

@@ -1,0 +1,24 @@
+$kind: http-request
+url: '{{pricefeed_url}}/v1/prices/BTC-USD/candles?interval=5m&limit=12'
+method: GET
+queryParams:
+  interval: '5m'
+  limit: '12'
+scripts:
+- type: afterResponse
+  code: |-
+    pm.test('status is 200', function () { pm.response.to.have.status(200); });
+    pm.test('at most 12 five-minute candles, oldest first', function () {
+        const body = pm.response.json();
+        pm.expect(body.interval).to.eql('5m');
+        pm.expect(body.candles.length).to.be.at.most(12);
+        for (let i = 1; i < body.candles.length; i++) {
+            pm.expect(Date.parse(body.candles[i].start)).to.be.above(Date.parse(body.candles[i - 1].start));
+        }
+        // Number() is fine for a range check in a test, never for money.
+        body.candles.forEach(function (c) {
+            pm.expect(Number(c.high)).to.be.at.least(Number(c.low));
+        });
+    });
+  language: text/javascript
+order: 5000
