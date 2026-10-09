@@ -656,7 +656,7 @@
         "uid": "prometheus"
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 8,
         "x": 0,
         "y": 15
@@ -708,7 +708,7 @@
         "uid": "prometheus"
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 8,
         "x": 8,
         "y": 15
@@ -754,13 +754,13 @@
       "id": 15,
       "type": "timeseries",
       "title": "Source failures (5m)",
-      "description": "Restarts by the supervisor, by connector and failure kind.",
+      "description": "Restarts by the supervisor, per connector. The logs and the kind label say why.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 8,
         "x": 16,
         "y": 15
@@ -771,8 +771,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (connector, kind) (increase(pricefeed_source_errors_total[5m]))",
-          "legendFormat": "{{connector}} {{kind}}",
+          "expr": "sum by (connector) (increase(pricefeed_source_errors_total[5m]))",
+          "legendFormat": "{{connector}}",
           "refId": "A",
           "range": true
         }
@@ -812,7 +812,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 23
+        "y": 25
       },
       "panels": []
     },
@@ -829,7 +829,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 24
+        "y": 26
       },
       "targets": [
         {
@@ -882,7 +882,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 24
+        "y": 26
       },
       "targets": [
         {
@@ -934,7 +934,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 24
+        "y": 26
       },
       "targets": [
         {
@@ -983,7 +983,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 32
+        "y": 34
       },
       "panels": []
     },
@@ -1000,7 +1000,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 33
+        "y": 35
       },
       "targets": [
         {
@@ -1062,7 +1062,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 33
+        "y": 35
       },
       "targets": [
         {
@@ -1114,7 +1114,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 33
+        "y": 35
       },
       "targets": [
         {
@@ -1166,7 +1166,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 41
+        "y": 43
       },
       "targets": [
         {
@@ -1228,7 +1228,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 41
+        "y": 43
       },
       "targets": [
         {
@@ -1280,7 +1280,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 41
+        "y": 43
       },
       "targets": [
         {
