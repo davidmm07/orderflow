@@ -1,16 +1,21 @@
 # Local stack: Orderflow publishing to a single node Redpanda (Kafka API),
-# monitored by Prometheus and Grafana.
+# the price feed (one ingest node, one edge node, Postgres and Valkey),
+# all monitored by Prometheus and Grafana.
 #
-#   make env        # once, creates .env with two traders
+#   make env        # once, creates .env with two traders and a DB password
 #   make up         # build and start
 #   make consume    # watch events arrive on the topic
 #   make down       # stop and delete volumes
 #
-#   API          http://127.0.0.1:8080
-#   Prometheus   http://127.0.0.1:9090  (targets, alerts, queries)
-#   Grafana      http://127.0.0.1:3000  (Orderflow dashboard)
+#   Exchange API   http://127.0.0.1:8080
+#   Price feed     http://127.0.0.1:8090  (REST and ws://127.0.0.1:8090/v1/ws)
+#   Prometheus     http://127.0.0.1:9090  (targets, alerts, queries)
+#   Grafana        http://127.0.0.1:3000  (Orderflow and Price feed dashboards)
 #
-# Compose reads ORDERFLOW_API_CREDENTIALS from .env for interpolation.
+# Compose reads ORDERFLOW_API_CREDENTIALS and PRICEFEED_DB_PASSWORD from .env
+# for interpolation. The price feed reaches public exchange APIs and public
+# Ethereum and Solana RPC nodes; set PRICEFEED_EVM_RPC_URL and
+# PRICEFEED_SOLANA_RPC_URL in .env to use your own provider instead.
 
 name: orderflow
 
@@ -66,6 +71,81 @@ services:
       topics:
         condition: service_completed_successfully
 
+  # Price history and the indexers' checkpoints. Not published on the host:
+  # use `docker compose exec postgres psql -U pricefeed` to look inside.
+  postgres:
+    image: postgres:18.6-alpine
+    environment:
+      POSTGRES_DB: pricefeed
+      POSTGRES_USER: pricefeed
+      POSTGRES_PASSWORD: ${PRICEFEED_DB_PASSWORD:?run make pricefeed-env to add it to .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pricefeed -d pricefeed"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  # Price bus between the ingest node and edge nodes, plus the shared candle
+  # cache. Valkey is the open source Redis fork ElastiCache runs. A cache
+  # with nothing to persist: no snapshots, LRU eviction at the memory cap.
+  valkey:
+    image: valkey/valkey:8.1.10-alpine
+    command: ["valkey-server", "--save", "", "--appendonly", "no",
+              "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  # Runs the sources and the aggregator; writes Postgres, publishes Valkey.
+  # Start a second copy and it waits as a standby for the ingest lease.
+  pricefeed-ingest:
+    build:
+      context: .
+      target: pricefeed
+    environment:
+      PRICEFEED_ROLE: ingest
+      PRICEFEED_DATABASE_URL: postgres://pricefeed:${PRICEFEED_DB_PASSWORD}@postgres:5432/pricefeed
+      PRICEFEED_REDIS_URL: redis://valkey:6379
+      PRICEFEED_KAFKA_BROKERS: redpanda:9092
+      PRICEFEED_KAFKA_TOPIC: orderflow.events.v1
+      PRICEFEED_EVM_RPC_URL: ${PRICEFEED_EVM_RPC_URL:-https://ethereum-rpc.publicnode.com}
+      PRICEFEED_SOLANA_RPC_URL: ${PRICEFEED_SOLANA_RPC_URL:-https://api.mainnet-beta.solana.com}
+      PRICEFEED_COINGECKO_API_KEY: ${PRICEFEED_COINGECKO_API_KEY:-}
+      RUST_LOG: info
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      topics:
+        condition: service_completed_successfully
+
+  # Serves clients. Stateless: scale it out behind a load balancer.
+  pricefeed:
+    build:
+      context: .
+      target: pricefeed
+    environment:
+      PRICEFEED_ROLE: edge
+      PRICEFEED_DATABASE_URL: postgres://pricefeed:${PRICEFEED_DB_PASSWORD}@postgres:5432/pricefeed
+      PRICEFEED_REDIS_URL: redis://valkey:6379
+      RUST_LOG: info
+    ports:
+      - "127.0.0.1:8090:8090"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      pricefeed-ingest:
+        condition: service_started
+
   prometheus:
     image: prom/prometheus:v3.15.0
     command:
@@ -78,6 +158,7 @@ services:
       - "127.0.0.1:9090:9090"
     depends_on:
       - orderflow
+      - pricefeed
 
   # View-only Grafana for local use: anonymous viewers, no login form and no
   # basic auth, so there is no default admin password to leave exposed.
@@ -107,3 +188,4 @@ services:
 
 volumes:
   prometheus-data:
+  postgres-data:
