@@ -1,0 +1,159 @@
+{
+  "aggregation": {
+    "quorum": 2,
+    "max_deviation_bps": 200
+  },
+  "markets": [
+    { "market": "BTC-USD" },
+    { "market": "ETH-USD" },
+    { "market": "SOL-USD" },
+    { "market": "XRP-USD" },
+    { "market": "ADA-USD" },
+    { "market": "DOGE-USD" },
+    { "market": "AVAX-USD" },
+    { "market": "LINK-USD" },
+    { "market": "LTC-USD" },
+    { "market": "DOT-USD" },
+    { "market": "BTC-EUR" },
+    { "market": "ETH-EUR" },
+    { "market": "ETH-USDC", "max_deviation_bps": 100 },
+    { "market": "BTC-USDC", "max_deviation_bps": 150 },
+    { "market": "SOL-USDC", "max_deviation_bps": 150 }
+  ],
+  "sources": {
+    "coingecko": {
+      "base_url": "https://api.coingecko.com/api/v3",
+      "poll_interval_secs": 30,
+      "max_age_secs": 300,
+      "quotes": {
+        "BTC-USD": "bitcoin/usd",
+        "ETH-USD": "ethereum/usd",
+        "SOL-USD": "solana/usd",
+        "XRP-USD": "ripple/usd",
+        "ADA-USD": "cardano/usd",
+        "DOGE-USD": "dogecoin/usd",
+        "AVAX-USD": "avalanche-2/usd",
+        "LINK-USD": "chainlink/usd",
+        "LTC-USD": "litecoin/usd",
+        "DOT-USD": "polkadot/usd",
+        "BTC-EUR": "bitcoin/eur",
+        "ETH-EUR": "ethereum/eur"
+      }
+    },
+    "kraken": {
+      "base_url": "https://api.kraken.com/0/public",
+      "poll_interval_secs": 5,
+      "max_age_secs": 60,
+      "pairs": {
+        "BTC-USD": "XXBTZUSD",
+        "ETH-USD": "XETHZUSD",
+        "SOL-USD": "SOLUSD",
+        "XRP-USD": "XXRPZUSD",
+        "ADA-USD": "ADAUSD",
+        "DOGE-USD": "XDGUSD",
+        "AVAX-USD": "AVAXUSD",
+        "LINK-USD": "LINKUSD",
+        "LTC-USD": "XLTCZUSD",
+        "DOT-USD": "DOTUSD",
+        "BTC-EUR": "XXBTZEUR",
+        "ETH-EUR": "XETHZEUR",
+        "ETH-USDC": "ETHUSDC",
+        "BTC-USDC": "XBTUSDC",
+        "SOL-USDC": "SOLUSDC"
+      }
+    },
+    "coinbase": {
+      "url": "wss://ws-feed.exchange.coinbase.com",
+      "sample_interval_ms": 1000,
+      "idle_timeout_secs": 30,
+      "max_age_secs": 60,
+      "products": {
+        "BTC-USD": "BTC-USD",
+        "ETH-USD": "ETH-USD",
+        "SOL-USD": "SOL-USD",
+        "XRP-USD": "XRP-USD",
+        "ADA-USD": "ADA-USD",
+        "DOGE-USD": "DOGE-USD",
+        "AVAX-USD": "AVAX-USD",
+        "LINK-USD": "LINK-USD",
+        "LTC-USD": "LTC-USD",
+        "DOT-USD": "DOT-USD",
+        "BTC-EUR": "BTC-EUR",
+        "ETH-EUR": "ETH-EUR"
+      }
+    },
+    "uniswap_v3": {
+      "chain": "ethereum",
+      "confirmations": 3,
+      "max_block_range": 500,
+      "backfill_blocks": 20,
+      "poll_interval_secs": 12,
+      "max_age_secs": 180,
+      "pools": [
+        {
+          "id": "usdc_weth_500",
+          "address": "0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640",
+          "market": "ETH-USDC",
+          "base": "token1",
+          "token0_decimals": 6,
+          "token1_decimals": 18
+        },
+        {
+          "id": "usdc_weth_3000",
+          "address": "0x8ad599c3A0ff1De082011EFDDc58f1908eb6e6D8",
+          "market": "ETH-USDC",
+          "base": "token1",
+          "token0_decimals": 6,
+          "token1_decimals": 18
+        },
+        {
+          "id": "wbtc_usdc_500",
+          "address": "0x9a772018FbD77fcD2d25657e5C547BAfF3Fd7D16",
+          "market": "BTC-USDC",
+          "base": "token0",
+          "token0_decimals": 8,
+          "token1_decimals": 6
+        },
+        {
+          "id": "wbtc_usdc_3000",
+          "address": "0x99ac8cA7087fA4A2A1FB6357269965A2014ABc35",
+          "market": "BTC-USDC",
+          "base": "token0",
+          "token0_decimals": 8,
+          "token1_decimals": 6
+        }
+      ]
+    },
+    "orca": {
+      "poll_interval_secs": 2,
+      "max_age_secs": 30,
+      "pools": [
+        {
+          "id": "sol_usdc_4",
+          "address": "Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE",
+          "market": "SOL-USDC",
+          "base": "token_a",
+          "mint_a": "So11111111111111111111111111111111111111112",
+          "mint_b": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+          "decimals_a": 9,
+          "decimals_b": 6
+        },
+        {
+          "id": "sol_usdc_1",
+          "address": "83v8iPyZihDEjDdY8RdZddyZNyUtXngz69Lgo9Kt5d6d",
+          "market": "SOL-USDC",
+          "base": "token_a",
+          "mint_a": "So11111111111111111111111111111111111111112",
+          "mint_b": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+          "decimals_a": 9,
+          "decimals_b": 6
+        }
+      ]
+    },
+    "orderflow": {
+      "role": "monitor",
+      "max_age_secs": 300,
+      "markets": ["BTC-USD", "ETH-USD", "SOL-USD", "BTC-EUR", "ETH-EUR", "ETH-USDC", "BTC-USDC"]
+    }
+  }
+}

@@ -1,0 +1,52 @@
+[package]
+name = "orderflow-pricefeed"
+description = "Price feed service: ingestion, REST and WebSocket fanout of live index prices."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "pricefeed"
+path = "src/main.rs"
+
+[features]
+default = []
+kafka = ["orderflow-ingest/kafka"]
+
+[dependencies]
+alloy-primitives.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+axum = { workspace = true, features = ["ws"] }
+chrono.workspace = true
+dotenvy.workspace = true
+futures-util.workspace = true
+orderflow-application.workspace = true
+orderflow-domain.workspace = true
+orderflow-infrastructure.workspace = true
+orderflow-ingest.workspace = true
+orderflow-marketdata.workspace = true
+orderflow-storage.workspace = true
+rust_decimal.workspace = true
+rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-stream.workspace = true
+tokio-util.workspace = true
+tower = { workspace = true, features = ["util"] }
+tower-http = { workspace = true, features = ["catch-panic", "cors", "request-id", "set-header", "trace", "util"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+http-body-util.workspace = true
+rust_decimal_macros.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
+tokio-tungstenite.workspace = true
+
+[lints]
+workspace = true
