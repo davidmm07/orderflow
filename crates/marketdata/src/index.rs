@@ -19,6 +19,11 @@ use crate::{
 /// broken clock would stay "fresh" forever.
 const MAX_FUTURE_SKEW: Duration = Duration::from_secs(5);
 
+/// A price that does not move is republished at most this often while
+/// fresher quotes keep confirming it. Without it `as_of` would freeze on a
+/// quiet market, and clients could not tell a steady price from a dead one.
+const REFRESH_AFTER: Duration = Duration::from_secs(5);
+
 /// Configuration of one market: its aggregation rule and its sources.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MarketFeed {
@@ -85,6 +90,8 @@ struct MarketState {
     quotes: Vec<Option<LatestQuote>>,
     sequence: u64,
     last: Option<(Published, Timestamp)>,
+    /// When the last update went out.
+    published_at: Timestamp,
 }
 
 /// Index prices of every configured market.
@@ -121,6 +128,7 @@ impl PriceIndex {
                 sources,
                 sequence: 0,
                 last: None,
+                published_at: Timestamp::default(),
             };
             if markets.insert(feed.market.clone(), state).is_some() {
                 return Err(MarketDataError::DuplicateMarket(feed.market.to_string()));
@@ -218,7 +226,16 @@ impl PriceIndex {
                 }
                 (None, None) => continue,
             };
-            if state.last.as_ref().is_some_and(|(last, _)| *last == next) {
+            let unchanged = state.last.as_ref().is_some_and(|(last, _)| *last == next);
+            let refresh_due = state
+                .last
+                .as_ref()
+                .is_some_and(|(_, last_as_of)| as_of > *last_as_of)
+                && u128::from(
+                    now.unix_nanos()
+                        .saturating_sub(state.published_at.unix_nanos()),
+                ) >= REFRESH_AFTER.as_nanos();
+            if unchanged && !refresh_due {
                 continue;
             }
 
@@ -235,6 +252,7 @@ impl PriceIndex {
                 components: result.components,
             });
             state.last = Some((next, as_of));
+            state.published_at = now;
         }
         updates
     }
@@ -349,6 +367,16 @@ mod tests {
             .observe(&quote("orderflow", dec!(90), 102), at(102))
             .unwrap();
         assert!(index.evaluate(at(102)).is_empty());
+
+        // A steady price is still refreshed now and then, so `as_of` keeps
+        // telling how fresh the backing quotes are.
+        index
+            .observe(&quote("kraken", dec!(100), 106), at(106))
+            .unwrap();
+        let refreshed = index.evaluate(at(106));
+        assert_eq!(refreshed.len(), 1);
+        assert_eq!((refreshed[0].sequence, refreshed[0].as_of), (3, at(106)));
+        assert!(index.evaluate(at(107)).is_empty());
     }
 
     #[test]

@@ -46,9 +46,10 @@ their deviation in basis points, and alerted on, but never counted.
 
 Every published update carries `(epoch, sequence)`, the per-source
 breakdown (`components`) and the spread between the quotes used. It is
-published only when the price, the status or the set of sources used
-changes, and at most once per `publish_interval` (250 ms): bursts of
-quotes collapse into one update.
+published when the price, the status or the set of sources used changes,
+and at most once per `publish_interval` (250 ms): bursts of quotes
+collapse into one update. A steady price is republished every 5 seconds
+while fresher quotes confirm it, so `as_of` keeps moving.
 
 All arithmetic is `rust_decimal`, as in the matching engine. The crate
 denies float arithmetic.
@@ -73,5 +74,5 @@ denies float arithmetic.
 - A market needs at least `quorum` independent sources to be `live`, which
   costs integration work per market. The DEX indexers are one way to get
   sources nobody can switch off.
-- Updates are change-driven: a price that does not move is not
-  republished, and `as_of` tells how fresh the backing quotes are.
+- Updates are change-driven with a slow refresh: a steady price costs one
+  update per 5 seconds, and `as_of` tells how fresh the backing quotes are.
