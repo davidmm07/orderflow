@@ -1,0 +1,308 @@
+openapi: 3.1.0
+info:
+  title: Orderflow price feed
+  version: 0.1.0
+  summary: Index prices aggregated from exchanges, CoinGecko and on-chain pools.
+  description: |
+    Public, unauthenticated market data. Every price is the median of fresh
+    quotes from several sources with outliers removed (docs/adr/0006).
+
+    Decimal values are strings and times are RFC 3339 with milliseconds.
+    Errors are RFC 9457 problem documents; docs/errors.md lists the codes.
+
+    Live prices are also streamed over WebSocket at `/v1/ws`. The protocol is
+    described in the README (section "Market data: the price feed") and
+    implemented by the TypeScript client in clients/typescript.
+
+    Responses carry `Cache-Control`: `public, max-age=1` for live data and
+    `public, max-age=60` for candle windows that have closed, so browsers
+    and CDNs absorb traffic spikes.
+  license:
+    name: MIT
+servers:
+  - url: http://127.0.0.1:8090
+
+tags:
+  - name: Prices
+    description: Index prices and the sources behind them.
+  - name: History
+    description: OHLC candles of the index price.
+  - name: Operations
+    description: Health and metrics.
+
+paths:
+  /v1/prices:
+    get:
+      tags: [Prices]
+      operationId: listPrices
+      summary: Latest index price of every market, or of a list of markets.
+      description: Served from memory; never touches the database.
+      parameters:
+        - name: markets
+          in: query
+          description: Comma separated market ids, at most 100.
+          schema: { type: string, example: "BTC-USD,ETH-USDC" }
+      responses:
+        "200":
+          description: Prices sorted by market. Markets without a price yet are omitted.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/CacheControl" }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [prices]
+                properties:
+                  prices:
+                    type: array
+                    items: { $ref: "#/components/schemas/Price" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+
+  /v1/prices/{market}:
+    get:
+      tags: [Prices]
+      operationId: getPrice
+      summary: One market's index price with the per-source breakdown.
+      parameters:
+        - $ref: "#/components/parameters/Market"
+      responses:
+        "200":
+          description: The price and every source's quote with how it was treated.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/CacheControl" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PriceDetail" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "503":
+          $ref: "#/components/responses/Problem"
+
+  /v1/prices/{market}/candles:
+    get:
+      tags: [History]
+      operationId: getCandles
+      summary: OHLC candles of the index price, oldest first.
+      description: |
+        Only 1 minute candles are stored; longer intervals are rolled up when
+        read. Reads go through an in-process cache that coalesces identical
+        concurrent requests, then Redis, then Postgres.
+      parameters:
+        - $ref: "#/components/parameters/Market"
+        - name: interval
+          in: query
+          schema: { type: string, enum: ["1m", "5m", "15m", "1h", "4h", "1d"], default: "1m" }
+        - name: limit
+          in: query
+          description: Number of buckets in the window.
+          schema: { type: integer, minimum: 1, maximum: 1000, default: 100 }
+        - name: end
+          in: query
+          description: Only candles that start before this time. Omit for the latest window, including the bucket in progress.
+          schema: { type: string, format: date-time, example: "2026-10-08T22:00:00Z" }
+      responses:
+        "200":
+          description: Buckets without any price update are absent rather than filled in.
+          headers:
+            Cache-Control: { $ref: "#/components/headers/CacheControl" }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [market, interval, candles]
+                properties:
+                  market: { type: string, example: "BTC-USD" }
+                  interval: { type: string, example: "5m" }
+                  candles:
+                    type: array
+                    items: { $ref: "#/components/schemas/Candle" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+
+  /v1/sources:
+    get:
+      tags: [Prices]
+      operationId: listSources
+      summary: Every source seen in the current prices and how the index uses it.
+      responses:
+        "200":
+          description: Sources sorted by id.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sources]
+                properties:
+                  sources:
+                    type: array
+                    items: { $ref: "#/components/schemas/SourceSummary" }
+
+  /v1/ws:
+    get:
+      tags: [Prices]
+      operationId: streamPrices
+      summary: WebSocket upgrade for live prices.
+      description: |
+        Send `{"op":"subscribe","markets":["BTC-USD"]}`. Each subscription
+        starts with the current price and then follows every change, in
+        `(epoch, sequence)` order per market. A slow reader receives the
+        newest price, never a backlog. The server pings every 20 seconds and
+        closes with code 1001 when it shuts down.
+      responses:
+        "101":
+          description: Switching to the WebSocket protocol.
+        "503":
+          description: The node is at its connection limit (`too_many_connections`).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+
+  /health/live:
+    get:
+      tags: [Operations]
+      operationId: live
+      summary: The process is up.
+      responses:
+        "200":
+          description: Always, while the process runs.
+
+  /health/ready:
+    get:
+      tags: [Operations]
+      operationId: ready
+      summary: The node can serve live prices.
+      description: Immediately for ingesting nodes; after the first Redis snapshot for edge nodes.
+      responses:
+        "200":
+          description: Ready.
+        "503": { $ref: "#/components/responses/Problem" }
+
+  /metrics:
+    get:
+      tags: [Operations]
+      operationId: metrics
+      summary: Prometheus metrics in the text exposition format.
+      responses:
+        "200":
+          description: Metrics.
+          content:
+            text/plain:
+              schema: { type: string }
+
+components:
+  parameters:
+    Market:
+      name: market
+      in: path
+      required: true
+      schema: { type: string, pattern: "^[A-Z0-9]{2,10}-[A-Z0-9]{2,10}$", example: "ETH-USDC" }
+
+  headers:
+    CacheControl:
+      description: "`public, max-age=1` for live data, `public, max-age=60` for closed candle windows."
+      schema: { type: string }
+
+  responses:
+    Problem:
+      description: RFC 9457 problem document.
+      headers:
+        Retry-After:
+          schema: { type: integer }
+          description: Seconds to wait, on 503.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+
+  schemas:
+    Decimal:
+      type: string
+      pattern: "^-?[0-9]+(\\.[0-9]+)?$"
+      example: "81650.5"
+
+    Price:
+      type: object
+      required: [market, price, status, as_of, published_at, epoch, sequence, sources_used, spread_bps]
+      properties:
+        market: { type: string, example: "BTC-USD" }
+        price: { $ref: "#/components/schemas/Decimal" }
+        status:
+          type: string
+          enum: [live, degraded, stale]
+          description: |
+            live: at least the market's quorum of fresh sources agree.
+            degraded: a price exists but fewer sources back it, or they disagree; fine to display, while automated consumers should wait for live.
+            stale: no fresh source is left; this is the last published price.
+        as_of: { type: string, format: date-time, description: Time of the newest quote behind the price. }
+        published_at: { type: string, format: date-time }
+        epoch: { type: integer, description: "Run of the publisher: its start time in milliseconds." }
+        sequence: { type: integer, description: Counts from 1 per market within an epoch. }
+        sources_used: { type: integer }
+        spread_bps: { $ref: "#/components/schemas/Decimal" }
+
+    Component:
+      type: object
+      required: [source, kind, price, observed_at, state]
+      properties:
+        source: { type: string, example: "uniswap_v3:usdc_weth_500" }
+        kind: { type: string, enum: [aggregator, cex, dex, venue] }
+        price: { $ref: "#/components/schemas/Decimal" }
+        observed_at: { type: string, format: date-time }
+        state: { type: string, enum: [used, outlier, stale, monitor] }
+        deviation_bps:
+          allOf: [{ $ref: "#/components/schemas/Decimal" }]
+          description: Distance from the index price, negative below it.
+
+    PriceDetail:
+      allOf:
+        - $ref: "#/components/schemas/Price"
+        - type: object
+          required: [components]
+          properties:
+            components:
+              type: array
+              items: { $ref: "#/components/schemas/Component" }
+
+    Candle:
+      type: object
+      required: [start, open, high, low, close]
+      properties:
+        start: { type: string, format: date-time }
+        open: { $ref: "#/components/schemas/Decimal" }
+        high: { $ref: "#/components/schemas/Decimal" }
+        low: { $ref: "#/components/schemas/Decimal" }
+        close: { $ref: "#/components/schemas/Decimal" }
+
+    SourceSummary:
+      type: object
+      required: [source, kind, markets, used_in, outlier_in, stale_in, last_observed_at]
+      properties:
+        source: { type: string }
+        kind: { type: string, enum: [aggregator, cex, dex, venue] }
+        markets: { type: array, items: { type: string } }
+        used_in: { type: integer }
+        outlier_in: { type: integer }
+        stale_in: { type: integer }
+        last_observed_at: { type: string, format: date-time }
+
+    FieldError:
+      type: object
+      required: [field, code, message]
+      properties:
+        field: { type: string }
+        code: { type: string }
+        message: { type: string }
+
+    Problem:
+      type: object
+      required: [type, title, status, detail, code]
+      properties:
+        type: { type: string, example: "urn:orderflow:problem:price_unavailable" }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        code: { type: string, description: Stable machine readable identifier. }
+        errors:
+          type: array
+          items: { $ref: "#/components/schemas/FieldError" }

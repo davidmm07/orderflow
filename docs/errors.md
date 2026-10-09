@@ -75,6 +75,43 @@ server log, next to the request id.
 | `depth` | `out_of_range` | Book depth outside 1 to 100 |
 | `base`, `quote` | `invalid_asset_code` | Market filter that is not 2 to 10 uppercase letters or digits |
 
+## Price feed codes
+
+The price feed (`crates/pricefeed`, port 8090) uses the same problem
+format. Its codes:
+
+| Status | `code` | When | What the client should do |
+|---|---|---|---|
+| 404 | `market_not_found` | The market id is well formed but not served by the feed | Use `GET /v1/prices` for the list |
+| 404 | `route_not_found` | No route matches the path | Fix the URL |
+| 422 | `validation_failed` | A parameter is invalid; see `errors` | Fix every listed field |
+| 422 | `invalid_query` | Unknown or malformed query parameter | Follow the schema |
+| 500 | `internal_error` | A bug | Report with `x-request-id` |
+| 503 | `price_unavailable` | The market has not published a price yet, for example right after a start | Retry after `Retry-After` |
+| 503 | `store_unavailable` | Candle history cannot be read (database and caches unreachable) | Retry after `Retry-After`; live prices still work |
+| 503 | `too_many_connections` | The node is at its WebSocket connection limit | Reconnect; the load balancer picks another node |
+| 503 | `not_ready` | Readiness probe: an edge node has no price stream yet | Wait |
+| 503 | `timeout` | The request exceeded `PRICEFEED_REQUEST_TIMEOUT_MS` | Retry |
+
+Field level codes: `market` / `markets` with `invalid_market` (not shaped
+like `BTC-USD`) or `too_many` (more than 100 in one filter), `interval`
+with `invalid_interval`, `limit` with `out_of_range` (1 to 1000), `end`
+with `invalid_time` (not RFC 3339).
+
+WebSocket errors arrive as `{"type":"error","code":...,"detail":...}`
+messages and leave the connection open:
+
+| `code` | When |
+|---|---|
+| `invalid_message` | Not JSON, an unknown `op`, an unknown field, or a binary frame |
+| `invalid_market` | A market id that is not shaped like `BTC-USD`; it is never echoed back |
+| `unknown_market` | Well formed ids that are not listed, returned in `markets` |
+| `too_many_subscriptions` | More than `max_subscriptions` markets on one connection |
+
+Closing codes: `1001` when the server shuts down (reconnect at once, to
+another node), `1008` after too many control messages in one heartbeat
+interval.
+
 ## Adding a new error
 
 1. Add the variant to `DomainError` or `ApplicationError` and give it a

@@ -9,8 +9,8 @@ fix that before moving on, because later steps depend on it.
 - This file covers how to work on it: setting up, running, reading the
   code, changing it and shipping.
 
-Plan one working day for steps 1 to 11 and a second day for the guided
-change in step 12.
+Plan one working day for steps 1 to 11, a second day for the guided
+change in step 12, and half a day for the price feed in steps 14 to 16.
 
 ---
 
@@ -24,14 +24,20 @@ flowchart LR
     clients([Clients]) -- "HTTP, signed" --> orderflow["<b>Orderflow</b><br/>matching engine and API"]
     orderflow -- events --> topic[("Kafka topic<br/>orderflow.events.v1")]
     topic --> ledger[Ledger and settlement]
-    topic --> data[Market data]
+    topic --> data["Price feed<br/>(steps 14 to 16)"]
     topic --> risk[Risk and surveillance]
     topic --> more[Other consumers]
 ```
 
+The repository holds a second service built the same way: the price feed,
+which aggregates prices from exchanges, CoinGecko and its own Ethereum and
+Solana indexers into one index price per market and streams it to
+clients. It also reads Orderflow's trades from the topic. Steps 14 to 16
+cover it.
+
 Keep three design rules in mind while you read the code:
 
-1. Clean architecture. The code is split into five crates arranged in
+1. Clean architecture. The exchange is split into five crates arranged in
    rings, and dependencies point inwards to the domain. The domain has no
    async code, no IO and no framework.
 2. One writer per market. Each market's book is owned by a single task (an
@@ -700,7 +706,8 @@ At most two short lines of body, only when the subject needs context.
 
 - Types: `feat`, `fix`, `refactor`, `perf`, `test`, `docs`, `build`, `ci`,
   `chore`. Scopes: `domain`, `application`, `infrastructure`, `api`,
-  `server`, `postman`.
+  `server`, `marketdata`, `ingest`, `storage`, `pricefeed`, `sdk`,
+  `deploy`, `postman`.
 - Keep the description brief.
 
 Code rules:
@@ -726,6 +733,199 @@ Pull request checklist:
 
 ---
 
+## Step 14. The price feed
+
+The price feed answers "what is the price of this market right now?" from
+many sources at once, and serves the answer to many clients. Read the
+[README section](README.md#market-data-the-price-feed) first, then ADR
+[0006](docs/adr/0006-one-index-price-from-many-sources.md).
+
+Run it. It needs no `.env` entries: it calls public exchange APIs and
+public Ethereum and Solana RPC nodes, and keeps history in memory:
+
+```bash
+make run-pricefeed
+```
+
+In a second terminal, after a few seconds:
+
+```bash
+curl -s localhost:8090/v1/prices | python3 -m json.tool | head -30
+```
+
+```bash
+curl -s localhost:8090/v1/prices/SOL-USDC | python3 -m json.tool
+```
+
+The second response lists every source of `SOL-USDC`: Kraken and two Orca
+pools read straight from Solana. Each has a `state` (`used`, `outlier`,
+`stale`, `monitor`) and its distance from the index in basis points.
+
+Watch prices live with the TypeScript CLI (needs Node.js 20 or later; the
+first run installs and builds it):
+
+```bash
+make prices MARKETS="BTC-USD ETH-USDC SOL-USDC"
+```
+
+Now take sources away. Stop the service and start it with Kraken as the
+only source:
+
+```bash
+PRICEFEED_SOURCES=kraken make run-pricefeed
+```
+
+Every market turns `degraded`: one source is below the quorum of 2 in
+[`config/marketdata.json`](config/marketdata.json). Start it with
+`PRICEFEED_SOURCES=none` and `/v1/prices/BTC-USD` answers `503
+price_unavailable`, the contract clients rely on right after a start.
+
+Code tour, in the order data flows:
+
+| Read | To learn |
+|---|---|
+| [`crates/marketdata/src/aggregate.rs`](crates/marketdata/src/aggregate.rs) | The index rule: freshness, median, outliers, status |
+| [`crates/marketdata/src/index.rs`](crates/marketdata/src/index.rs) | Latest quote per source; when an update is worth publishing |
+| [`crates/marketdata/src/pipeline.rs`](crates/marketdata/src/pipeline.rs) | The aggregator actor and its publishing cadence |
+| [`crates/ingest/src/runtime.rs`](crates/ingest/src/runtime.rs) | The `Source` trait and the supervisor |
+| [`crates/ingest/src/connectors/kraken.rs`](crates/ingest/src/connectors/kraken.rs) | The smallest connector, as a template |
+| [`crates/pricefeed/src/hub.rs`](crates/pricefeed/src/hub.rs) and [`ws.rs`](crates/pricefeed/src/ws.rs) | Fanout to WebSocket sessions and their limits |
+| [`crates/pricefeed/src/app.rs`](crates/pricefeed/src/app.rs) | Composition root: roles, sinks, leader lease |
+
+Exercise: in `aggregate.rs`, the test
+`a_wild_quote_is_an_outlier_and_does_not_move_the_price` uses three
+sources. Write one with five sources where two are wrong in the same
+direction, and predict the result before running it.
+
+> Checkpoint: you can explain why the index uses a median, what each
+> status means for a client, and why Orderflow's own trades are a
+> `monitor` source.
+
+---
+
+## Step 15. Chain indexers
+
+The DEX prices come from our own indexers, which read the chains directly. Read ADR
+[0007](docs/adr/0007-in-house-chain-indexers.md), then
+[`crates/ingest/src/chain/evm.rs`](crates/ingest/src/chain/evm.rs).
+
+Ethereum (Uniswap v3). Each step: compare the newest checkpoint's hash with
+the chain (reorg check), fetch `Swap` logs for the next range up to
+`head - confirmations`, check each log's block is canonical, store swaps
+and the checkpoint in one transaction, then publish each pool's price.
+The test `a_reorg_rolls_back_to_the_newest_canonical_checkpoint` fakes a
+reorg; read it next to `unwind_reorg`.
+
+Solana (Orca). One `getMultipleAccounts` call per poll, with
+`minContextSlot` so a lagging node cannot answer with older state. The
+account owner, the 8 byte discriminator and both mints are checked before
+the price is trusted.
+
+The tests replay real responses recorded from mainnet in
+[`crates/ingest/tests/fixtures`](crates/ingest/tests/fixtures), and the
+expected prices were computed separately with arbitrary precision integers.
+They run offline:
+
+```bash
+cargo test -p orderflow-ingest
+```
+
+With `make up` running, look at what the indexer stored:
+
+```bash
+docker compose exec postgres psql -U pricefeed -c "SELECT pool, block_number, price, amount0, amount1 FROM dex_swaps ORDER BY block_number DESC LIMIT 5"
+```
+
+```bash
+docker compose exec postgres psql -U pricefeed -c "SELECT indexer, block_number, block_hash FROM indexer_checkpoints ORDER BY block_number DESC LIMIT 3"
+```
+
+Adding a Uniswap v3 pool:
+
+1. Find the pool address and confirm its tokens and fee with `eth_call`
+   (`token0()` is `0x0dfe1681`, `token1()` is `0xd21220a7`, `fee()` is
+   `0xddca3f43`).
+2. Add it under `sources.uniswap_v3.pools` in `config/marketdata.json`
+   with `base` (`token0` or `token1`) and both decimals. The market must be
+   listed under `markets`.
+3. Restart. Startup validation rejects a malformed address, unknown market
+   or impossible decimals with one message per problem.
+
+> Checkpoint: you can say what happens to stored swaps when block 108 is
+> replaced, and why prices are published only once the indexer has caught
+> up.
+
+---
+
+## Step 16. Scaling, caching and operating the price feed
+
+Read ADR [0008](docs/adr/0008-price-fanout-and-caching.md). In production
+one `ingest` node computes prices and any number of `edge` nodes serve
+clients, connected through Redis. `make up` runs that split with Postgres
+and Valkey (an `.env` from before the price feed needs
+`make pricefeed-env` once).
+
+Watch the leader election:
+
+```bash
+docker compose up -d --scale pricefeed-ingest=2
+```
+
+```bash
+docker compose logs pricefeed-ingest | grep -E "lease|ingestion started"
+```
+
+One instance logs "holding the ingest lease", the other waits; the log
+prefix names the container, such as `orderflow-pricefeed-ingest-1`. Kill
+that one with `docker kill` and the standby takes over within seconds,
+publishing under a new epoch. Clients on http://127.0.0.1:8090 never
+notice.
+
+Measure the fanout. Each connection is a file descriptor, so raise the
+limit first for large runs:
+
+```bash
+make load-test CONNECTIONS=2000 LOAD_SECONDS=30
+```
+
+It prints connected clients, frames per second and latency percentiles
+from publication to receipt. ADR 0008 has reference numbers.
+
+Candle reads go memory, Redis, Postgres. Call the same URL twice and
+compare `pricefeed_cache_requests_total{tier="memory"}` hits in
+`curl -s localhost:8090/metrics`.
+
+Dashboard: http://127.0.0.1:3000/d/pricefeed. Alert rules are in the
+`pricefeed` group of `deploy/prometheus/alerts.yml`, each with a promtool
+test.
+
+Runbook:
+
+| Symptom | Likely cause | First action |
+|---|---|---|
+| Alert `NoIngestLeader` | No ingest node runs, or none reaches Postgres | Check the ingest containers and the database; the lease is a Postgres advisory lock |
+| Alert `IndexPriceStale` | Every index source of the market is down or rate limited | `GET /v1/prices/{market}` shows each source's state; check `pricefeed_source_errors_total` |
+| Alert `IndexPriceDegraded` | Fewer sources than the quorum, or sources disagree | Same breakdown; an `outlier` source for a long time deserves a look at that venue |
+| Alert `SourceFailing` | Upstream outage, a 429 rate limit, or a changed API | Search the logs for the connector name; a 429 on CoinGecko means adding `PRICEFEED_COINGECKO_API_KEY` |
+| Alert `IndexerLagging` | The RPC node is slow or limits `eth_getLogs` | Switch `PRICEFEED_EVM_RPC_URL` to a provider endpoint |
+| Alert `ChainReorgRolledBack` | A reorg replaced indexed blocks | Nothing for shallow ones; frequent ones mean raising `confirmations` |
+| Alert `PriceHistoryDropped` | Postgres is down or slow | Live prices are unaffected; restore the database, and expect a gap in candles |
+| Alert `WebSocketSlowConsumers` | Clients that do not read | Usually client side; if widespread, check edge CPU before scaling out |
+| Alert `VenuePriceDeviates` | Orderflow's book trades far from the market | Compare the book with `GET /v1/prices/{market}` before acting |
+| Edge `/health/ready` is 503 | The edge has no Redis subscription | Check Valkey; the edge reconnects by itself with backoff |
+
+Two more tools close the loop. `make test-integration` runs the storage
+adapters against real Postgres and Valkey in throwaway containers.
+`make tf-validate` checks the AWS Terraform in
+[`deploy/terraform`](deploy/terraform), which describes the same split on
+RDS, ElastiCache, ECS, an ALB and CloudFront; it is validated in CI and
+never applied from this repository.
+
+> Checkpoint: you have watched a failover, run a load test, and can say
+> which cache tier answers a repeated candle request.
+
+---
+
 ## Command reference
 
 `make help` prints this list. The step that introduces each command explains
@@ -747,7 +947,14 @@ it in context.
 | `make consume` | Prints events from the topic as they arrive | Step 8 |
 | `make topics` | Shows the topic's partitions and how many records each holds | Step 8 |
 | `make down` | Stops the stack and removes its volumes | Step 8 |
-| `make monitoring-check` | Validates the Prometheus config, tests the alert rules, checks the dashboard | Step 11 |
+| `make monitoring-check` | Validates the Prometheus config, tests the alert rules, checks the dashboards | Step 11 |
+| `make run-pricefeed` | Runs the price feed locally with live public sources and in-memory history | Step 14 |
+| `make prices` | Prints index prices with the TypeScript CLI; `MARKETS="BTC-USD ETH-USD"` streams them | Step 14 |
+| `make sdk` | Builds and tests the TypeScript client and CLI | Step 14 |
+| `make pricefeed-env` | Adds the price feed database password to an existing `.env` | Step 16 |
+| `make load-test` | WebSocket fanout load test; `CONNECTIONS`, `LOAD_SECONDS`, `LOAD_URL` | Step 16 |
+| `make test-integration` | Storage adapter tests against throwaway Postgres and Valkey containers | Step 16 |
+| `make tf-validate` | Checks formatting and validates the AWS Terraform | Step 16 |
 
 Scripts outside the Makefile:
 
@@ -755,6 +962,8 @@ Scripts outside the Makefile:
 |---|---|---|
 | `scripts/bootstrap-env.sh --add-trader` | Appends one more trader to an existing `.env` | Step 4 |
 | `scripts/signed-request.sh METHOD PATH [BODY]` | Sends one signed request; `ORDERFLOW_CREDENTIAL=2` signs as trader B | Step 3 |
+| `scripts/bootstrap-env.sh --add-pricefeed` | Adds the price feed database password to `.env` (what `make pricefeed-env` runs) | Step 16 |
+| `scripts/integration-test.sh` | Starts Postgres and Valkey on side ports, runs the ignored storage tests, removes them | Step 16 |
 
 ## Glossary
 
@@ -770,6 +979,16 @@ Scripts outside the Makefile:
 | Outbox | Bounded queue between the engines and the event sink |
 | Read model | The order repository, a projection of the event stream used for queries |
 | Load shedding | Refusing work early with a 503 when a queue is full |
+| Index price | The price feed's price for a market: the median of fresh, agreeing source quotes |
+| Quorum | Number of agreeing fresh sources a `live` index price needs |
+| Outlier | A fresh quote too far from the median to count |
+| Monitor source | A source shown next to the index but never part of it, such as Orderflow's own trades |
+| Conflation | Keeping only the newest value per key, so slow readers skip intermediate prices |
+| Confirmations | Blocks the EVM indexer stays behind the chain head |
+| Reorg | The chain replacing recent blocks; the indexer rolls its stored data back |
+| Ingest / edge | Price feed roles: one computes prices, the others serve clients |
+| Lease | The Postgres advisory lock that decides which ingest node is the leader |
+| Single flight | Concurrent identical cache misses waiting for one load instead of each loading |
 
 ## Where to look
 
@@ -784,6 +1003,12 @@ Scripts outside the Makefile:
 | Replace in-memory storage | Implement `OrderRepository` and `IdempotencyStore` and wire them in `app.rs`; nothing else changes |
 | Tune capacity | Env variables listed in `.env.example` |
 | Add a metric, alert or panel | Metric in `crates/infrastructure/src/metrics.rs` or `crates/api/src/http_metrics.rs`; alert and its test in `deploy/prometheus/`; panel in `deploy/grafana/dashboards/orderflow.json`; then `make monitoring-check` |
+| Add a market to the price feed | `config/marketdata.json`: the market under `markets`, then its symbol under each source |
+| Add an exchange connector | A `Source` in `crates/ingest/src/connectors/` (Kraken is the template), a fixture test, then a factory line in `crates/pricefeed/src/app.rs` |
+| Add a DEX pool | `config/marketdata.json`; step 15 has the checks |
+| Change the index rule | `crates/marketdata/src/aggregate.rs` and its property tests |
+| Change the WebSocket protocol | `crates/pricefeed/src/dto.rs` and `ws.rs`, then `clients/typescript/src/types.ts` and `stream.ts` |
+| Change the AWS setup | `deploy/terraform`, then `make tf-validate` |
 | Understand a past decision | `docs/adr/` |
 
 ## Onboarding checklist
@@ -801,3 +1026,6 @@ Scripts outside the Makefile:
 - [ ] Step 11: dashboard explored, an alert watched firing, runbook reviewed
 - [ ] Step 12: minimum notional change merged
 - [ ] Step 13: conventions understood
+- [ ] Step 14: price feed running, a source disabled and the status change observed
+- [ ] Step 15: indexer tests read, stored swaps inspected
+- [ ] Step 16: failover watched, load test run, runbook reviewed

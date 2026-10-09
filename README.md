@@ -7,6 +7,12 @@ written in Rust. It is a reference for the kind of service that sits at the
 core of an exchange, where correctness, security and operability matter
 more than feature count.
 
+Next to the exchange runs a market data service, the price feed: one index
+price per market, aggregated from exchange APIs, CoinGecko and in-house
+Ethereum and Solana indexers, streamed to clients over WebSocket and
+backed by Postgres with cache tiers for traffic spikes. See
+[Market data: the price feed](#market-data-the-price-feed).
+
 If you are new to the codebase, follow [KT_README.MD](KT_README.MD) first.
 
 ## Features
@@ -41,9 +47,24 @@ Events
 - Events go to Kafka under a versioned JSON schema, keyed by market so
   each market keeps its order.
 
+Market data (price feed)
+- One index price per market from CoinGecko, Kraken, Coinbase (WebSocket),
+  Uniswap v3 swaps indexed from Ethereum and Orca pools read from Solana:
+  the median of fresh quotes, outliers removed, quorum and staleness
+  tracked, every value explainable by its per-source breakdown.
+- In-house chain indexers with reorg rollback (EVM) and slot-consistent
+  reads (Solana), tested offline against recorded mainnet responses.
+- WebSocket fanout with conflation: 20,000 clients on one node in a local
+  load test, at about 12 KiB of memory each.
+- Postgres history behind in-process, Redis and CDN cache tiers. One
+  ingest leader elected through Postgres; stateless edge nodes fed by
+  Redis scale out.
+- A TypeScript client SDK and CLI, and AWS Terraform (RDS, ElastiCache,
+  ECS Fargate, ALB, CloudFront) that CI validates and nobody applies.
+
 Operations
-- Prometheus metrics from the engine and the HTTP layer, alert rules with
-  unit tests, and a provisioned Grafana dashboard in the compose stack.
+- Prometheus metrics from every service, alert rules with unit tests, and
+  provisioned Grafana dashboards in the compose stack.
 - Liveness and readiness probes, JSON logs with request ids.
 - Load shedding, backpressure, retries with jittered backoff.
 - Graceful shutdown that drains every queued order before exit.
@@ -76,6 +97,24 @@ ORDERFLOW_CREDENTIAL=2 scripts/signed-request.sh POST /v1/markets/BTC-USD/orders
 curl -s localhost:8080/v1/markets/BTC-USD/book
 ```
 
+The price feed needs no setup: it reads public exchange APIs and public
+Ethereum and Solana RPC nodes, and keeps history in memory when no
+database is configured. Its index prices fill within a few seconds:
+
+```bash
+make run-pricefeed
+```
+
+```bash
+curl -s localhost:8090/v1/prices/ETH-USDC
+```
+
+With Node.js 20 or later, the TypeScript CLI streams them live:
+
+```bash
+make prices MARKETS="BTC-USD ETH-USDC SOL-USDC"
+```
+
 To run every scenario flow against the running server (see
 [Scenario flows](#scenario-flows-postman)):
 
@@ -87,8 +126,15 @@ make postman-env
 make flows
 ```
 
-To run the container image against Kafka (Redpanda), with Prometheus and
-Grafana ([Observability and monitoring](#observability-and-monitoring)):
+To run everything in containers: the exchange on Kafka (Redpanda), the
+price feed as an ingest node and an edge node on Postgres and Valkey, and
+Prometheus and Grafana
+([Observability and monitoring](#observability-and-monitoring)). An `.env`
+created before the price feed existed needs its database password first:
+
+```bash
+make pricefeed-env
+```
 
 ```bash
 make up
@@ -221,6 +267,16 @@ sequenceDiagram
 | [`orderflow-api`](crates/api) | Delivery | Routes, DTOs, validation, HMAC auth, rate limiting, problem responses |
 | [`orderflow-server`](crates/server) | Composition root | Env config, wiring, telemetry, graceful shutdown |
 
+The price feed is a second bounded context built the same way. It shares
+only `MarketId`, `Timestamp` and the `Clock` port with the exchange.
+
+| Crate | Ring | Responsibility |
+|---|---|---|
+| [`orderflow-marketdata`](crates/marketdata) | Entities and use cases | Sources, observations, the index rule, candles, the aggregator actor, ports and sinks. No I/O, no floats |
+| [`orderflow-ingest`](crates/ingest) | Adapters (inbound) | CoinGecko, Kraken and Coinbase connectors, the Uniswap v3 and Orca indexers, Orderflow's trades, the source supervisor |
+| [`orderflow-storage`](crates/storage) | Adapters (outbound) | Postgres store and leader lease, Redis bus, memory and Redis candle caches, in-memory store |
+| [`orderflow-pricefeed`](crates/pricefeed) | Delivery and composition root | REST, WebSocket hub and sessions, metrics, config, the `pricefeed` binary and its roles |
+
 ## SOLID in practice
 
 The `lib.rs` of each crate lists the principles that crate applies, and the
@@ -255,6 +311,14 @@ doc comment of each type says which one it follows.
 | Chain of Responsibility | [`router.rs`](crates/api/src/router.rs) | Middleware stack with one concern per layer |
 | Data Transfer Object | [`dto.rs`](crates/api/src/dto.rs), [`wire.rs`](crates/infrastructure/src/events/wire.rs) | Public contracts kept separate from the domain model |
 | Composition Root / Factory | [`app.rs`](crates/server/src/app.rs) | The single place where dependencies are injected |
+| Strategy + Supervisor | [`runtime.rs`](crates/ingest/src/runtime.rs) | Every exchange and chain is a `Source`; one supervisor restarts any of them with backoff, honoring `Retry-After` |
+| Actor / single writer | [`pipeline.rs`](crates/marketdata/src/pipeline.rs) | One task owns the price index and publishes on a fixed cadence |
+| Queue-based load leveling | [`StoreWriter`](crates/marketdata/src/sinks.rs) | Database latency and outages stay off the price path |
+| Conflation | [`ConflatingPublisher`](crates/marketdata/src/sinks.rs), [`hub.rs`](crates/pricefeed/src/hub.rs) | Only the newest price per market is kept, so slow consumers cost no memory |
+| Observer | [`PriceHub`](crates/pricefeed/src/hub.rs) | One `watch` channel per market fans out to every WebSocket session |
+| Decorator + Single Flight | [`cache.rs`](crates/storage/src/cache.rs), [`redis.rs`](crates/storage/src/redis.rs) | Cache tiers wrap the store; concurrent identical reads share one load |
+| Leader election (lease) | [`LeaderLease`](crates/storage/src/postgres.rs) | Exactly one ingest node computes prices; a standby takes over |
+| Tolerant Reader | [`venue.rs`](crates/ingest/src/venue.rs) | The Kafka consumer reads only the event fields it needs |
 
 ## API
 
@@ -483,6 +547,226 @@ the six partitions with the number of records in each. From the host,
 Kafka clients connect to `127.0.0.1:19092`; inside the compose network the
 address is `redpanda:9092`.
 
+## Market data: the price feed
+
+The price feed is one reliable backend for market data. It ingests prices
+from third-party APIs and from the chains themselves, turns them into one
+index price per market, stores the history, and serves it to many clients
+at once. Its code is the four `orderflow-marketdata`, `-ingest`,
+`-storage` and `-pricefeed` crates, its configuration is
+[`config/marketdata.json`](config/marketdata.json), and the decisions
+behind it are ADRs [0006](docs/adr/0006-one-index-price-from-many-sources.md),
+[0007](docs/adr/0007-in-house-chain-indexers.md) and
+[0008](docs/adr/0008-price-fanout-and-caching.md).
+
+```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 400}}}%%
+flowchart LR
+    subgraph ingest["Ingest role: one leader, one standby"]
+        direction TB
+        cex["<b>Kraken</b> REST poll<br/><b>Coinbase</b> WebSocket"]
+        gecko["<b>CoinGecko</b> REST poll"]
+        evm["<b>Uniswap v3 indexer</b><br/>Ethereum JSON-RPC"]
+        sol["<b>Orca indexer</b><br/>Solana JSON-RPC"]
+        venue["<b>Orderflow trades</b><br/>Kafka topic"]
+        aggregator["<b>Aggregator</b><br/>median, outliers,<br/>quorum, staleness"]
+        cex --> aggregator
+        gecko --> aggregator
+        evm --> aggregator
+        sol --> aggregator
+        venue --> aggregator
+    end
+    pg[("<b>Postgres</b><br/>prices, candles,<br/>swaps, checkpoints")]
+    redis[("<b>Valkey / Redis</b><br/>price bus,<br/>candle cache")]
+    subgraph edges["Edge role: stateless, scaled out"]
+        hub["<b>PriceHub</b><br/>REST and WebSocket"]
+    end
+    clients["Browsers, bots,<br/>TypeScript SDK"]
+    aggregator --> pg
+    aggregator --> redis
+    redis --> hub
+    pg --> hub
+    hub --> clients
+
+    classDef core fill:#7a4a00,stroke:#f0a830,stroke-width:3px,color:#fff
+    classDef ring fill:#1f4e79,stroke:#5b9bd5,stroke-width:2px,color:#fff
+    classDef root fill:#37474f,stroke:#90a4ae,stroke-width:2px,color:#fff
+    class aggregator core
+    class cex,gecko,evm,sol,venue,hub ring
+    class pg,redis,clients root
+```
+
+The same binary runs as `PRICEFEED_ROLE=all` on a laptop (no database or
+Redis needed), or as one `ingest` node plus any number of `edge` nodes in
+production. `make up` runs the split version.
+
+### Sources
+
+| Source | Kind | Transport | Markets | Fresh for |
+|---|---|---|---|---|
+| CoinGecko | aggregator | REST poll every 30 s, exact decimals from the raw JSON | 12 USD and EUR markets | 5 min |
+| Kraken | CEX | REST poll every 5 s, all pairs in one call | all 15 markets | 60 s |
+| Coinbase Exchange | CEX | WebSocket ticker and heartbeat, sampled once a second | 12 USD and EUR markets | 60 s |
+| Uniswap v3, 4 pools | DEX | Swap logs from Ethereum, 3 confirmations, reorg rollback | ETH-USDC, BTC-USDC | 3 min |
+| Orca Whirlpools, 2 pools | DEX | Pool accounts from Solana at `confirmed`, `minContextSlot` | SOL-USDC | 30 s |
+| Orderflow | venue, monitor only | The exchange's Kafka event topic | 7 markets | 5 min |
+
+Every source implements one `Source` trait, and a supervisor restarts a
+failing one with jittered backoff, honoring `Retry-After`, without
+affecting the others. RPC URLs, which usually carry provider keys, come
+from `.env` (`PRICEFEED_EVM_RPC_URL`, `PRICEFEED_SOLANA_RPC_URL`) and
+default to public endpoints. Adding a market, a pair or a pool is an edit
+to `config/marketdata.json`, validated as a whole at startup.
+
+### The index price
+
+For each market the aggregator takes the fresh quotes of its index
+sources, computes their median, drops quotes further than
+`max_deviation_bps` from it, and publishes the median of the rest. The
+result says how far to trust it: `live` when at least `quorum` sources
+agree, `degraded` when fewer back it or they disagree, `stale` when no
+fresh source is left. Orderflow's own trades are a `monitor` source:
+compared with the index and alerted on, never part of it. Every price
+carries its breakdown:
+
+```json
+{
+  "market": "ETH-USDC",
+  "price": "2473.314464392150400004",
+  "status": "live",
+  "sources_used": 3,
+  "spread_bps": "3.67",
+  "components": [
+    { "source": "kraken", "kind": "cex", "price": "2473", "state": "used", "deviation_bps": "-1.27" },
+    { "source": "uniswap_v3:usdc_weth_3000", "kind": "dex", "price": "2473.907506832568812066", "state": "used", "deviation_bps": "2.40" },
+    { "source": "uniswap_v3:usdc_weth_500", "kind": "dex", "price": "2473.314464392150400004", "state": "used", "deviation_bps": "0" }
+  ]
+}
+```
+
+(`as_of`, `published_at`, `epoch`, `sequence` and each component's
+`observed_at` are left out above.) All of it is exact decimal arithmetic.
+On-chain prices come from `sqrtPriceX96` (Uniswap) and Q64.64
+`sqrt_price` (Orca) through 512 bit integer math, and raw token amounts
+are stored as `NUMERIC(78,0)`, wide enough for any `uint256`.
+
+### API
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /v1/prices?markets=BTC-USD,ETH-USDC` | Latest index prices, from memory |
+| `GET /v1/prices/{market}` | One price with the per-source breakdown |
+| `GET /v1/prices/{market}/candles?interval=5m&limit=100&end=...` | OHLC candles: `1m`, `5m`, `15m`, `1h`, `4h`, `1d` |
+| `GET /v1/sources` | How each source feeds the index right now |
+| `GET /v1/ws` | WebSocket stream of live prices |
+| `GET /health/live`, `/health/ready`, `/metrics` | Probes and Prometheus metrics |
+
+The contract is [`docs/pricefeed-openapi.yaml`](docs/pricefeed-openapi.yaml)
+and its error codes are in [docs/errors.md](docs/errors.md#price-feed-codes).
+The WebSocket protocol is a few JSON messages:
+
+```text
+-> {"op":"subscribe","markets":["BTC-USD","ETH-USDC"]}
+<- {"type":"subscribed","markets":["BTC-USD","ETH-USDC"]}
+<- {"type":"price","market":"BTC-USD","price":"81836.75","status":"live","epoch":1791499378245,"sequence":32,...}
+-> {"op":"unsubscribe","markets":["ETH-USDC"]}
+-> {"op":"ping"}
+<- {"type":"pong"}
+<- {"type":"error","code":"unknown_market","detail":"these markets are not listed","markets":["XYZ-USD"]}
+```
+
+A subscription starts with the current price and then follows every
+change in `(epoch, sequence)` order. A client that reads slowly gets the
+newest price, never a backlog.
+
+### WebSocket fanout at scale
+
+Each edge node keeps one `watch` channel per market. A publish stores one
+value and wakes the subscribers; the JSON frame is built once and shared
+by every session. Every session is bounded: connections per node (503 at
+the limit, so the load balancer picks another node), markets per
+connection, message size, control messages per heartbeat, a send timeout
+that drops slow consumers, and pings that detect dead peers. On shutdown
+each client gets close code 1001 and reconnects elsewhere.
+
+`make load-test` measured one release-build edge node fed by an ingest
+node through Valkey, everything on one laptop (WSL2, 16 vCPU) including
+the load generator:
+
+| Connections | Failed | Frames/s | p50 latency | p99 latency | Edge memory |
+|---|---|---|---|---|---|
+| 10,000 | 0 | about 10,600 | <= 50 ms | <= 250 ms | 126 MiB |
+| 20,000 | 0 | about 24,400 | <= 100 ms | <= 250 ms | 249 MiB |
+
+Latency is from the ingest node's `published_at` to the client, Redis hop
+included; with one client it is under a millisecond at the median. The
+first run used 1.4 GiB for 10,000 connections because the WebSocket library
+reserves 128 KiB of read buffer per connection; sizing the buffers for
+this protocol cut that tenfold (ADR 0008).
+
+### Caching through traffic spikes
+
+Live prices are served from memory and never touch storage. Candle reads
+pass through tiers, each absorbing what the next would see:
+
+| Tier | Scope | Keeps a response for |
+|---|---|---|
+| CloudFront (AWS) | per edge location | `Cache-Control`: 1 s for live windows, 60 s for closed ones |
+| `MemoryCandleCache` | per process | the same; identical concurrent misses wait for one load |
+| `RedisCandleCache` | all edge nodes | the same |
+| Postgres | source of truth | one query per key and expiry window |
+
+A Redis outage degrades reads to the next tier instead of failing them,
+and a database outage pauses the history while prices keep flowing. Writes go through a
+batching writer: one `UNNEST` statement per table per batch, 1 minute
+candles merged with `ON CONFLICT`, longer intervals rolled up with
+`date_bin` when read.
+
+### Leader election and failover
+
+Ingest nodes compete for a Postgres advisory lock. The holder ingests and
+the others wait. In a local test, killing the leader with `SIGKILL` let the
+standby take over within about a second, publishing under a new epoch that
+edge nodes accept without a gap. All writes are idempotent, so the short
+overlap possible during failover cannot corrupt history.
+
+### TypeScript client and CLI
+
+[`clients/typescript`](clients/typescript) is a typed client for the REST
+API and a reconnecting WebSocket stream: jittered backoff, resubscription,
+ordering by `(epoch, sequence)`, heartbeats, and an async iterator that
+conflates like the server does.
+
+```ts
+import WebSocket from 'ws';
+import { PriceStream, PricesClient, streamUrl } from '@orderflow/prices';
+
+const client = new PricesClient('http://127.0.0.1:8090');
+console.log(await client.price('ETH-USDC'));
+
+const stream = new PriceStream({
+  url: streamUrl('http://127.0.0.1:8090'),
+  markets: ['BTC-USD', 'SOL-USDC'],
+  webSocket: (url) => new WebSocket(url), // not needed in browsers or Node 22+
+}).start();
+for await (const price of stream) console.log(price.market, price.price, price.status);
+```
+
+The `orderflow-prices` CLI wraps it: `prices`, `price MARKET`,
+`candles MARKET --interval 5m`, `sources` and `watch MARKET...`
+(`make prices`).
+
+### AWS deployment (Terraform)
+
+[`deploy/terraform`](deploy/terraform) describes production on AWS: a VPC
+with private subnets in two zones, RDS PostgreSQL Multi-AZ, ElastiCache
+Valkey with TLS and auth, ECS Fargate services for ingest (leader plus
+standby) and edge (autoscaling on CPU), an ALB that only accepts traffic
+from CloudFront, CloudFront caching the REST API and passing WebSockets
+through, and Secrets Manager for every connection string. `make
+tf-validate` and tflint check it in CI; nothing is ever applied from this
+repository.
+
 ## Observability and monitoring
 
 - Logs are JSON lines in production (`ORDERFLOW_LOG_FORMAT=json`). Each
@@ -508,6 +792,16 @@ unknown paths share the label `unmatched`, and problem codes are the fixed
 list in [docs/errors.md](docs/errors.md), so a client cannot create
 unlimited time series.
 
+The price feed serves its own `/metrics` with the `pricefeed_` prefix:
+index updates, status and age per market (`pricefeed_index_status`,
+`pricefeed_index_age_seconds`), observations accepted and rejected per
+source and reason, source failures, indexer head, cursor, swaps and
+reorgs, store writes and drops, cache hits by tier, WebSocket
+connections, frames, disconnects by reason and conflated updates, and
+Orderflow's distance from the index (`pricefeed_monitor_deviation_bps`).
+Per-frame counters are atomics: with 20,000 sessions, a lock per send
+would serialize the fanout.
+
 Every series that a graph or alert watches exists at zero from startup:
 per-market engine counters, and the problem codes behind the
 `LoadShedding` and `AuthenticationFailuresHigh` alerts. Prometheus computes
@@ -531,6 +825,7 @@ market, invalid prices and clients with broken signatures.*
 | URL | What is there |
 |---|---|
 | http://127.0.0.1:3000/d/orderflow | Grafana dashboard: health stats, orders and trades by market, matching latency, event pipeline, HTTP status codes, problems by code, route latency, load shedding and rate limits. Filter by market at the top. |
+| http://127.0.0.1:3000/d/pricefeed | Price feed dashboard: ingest leader, live markets, index age and status, Orderflow vs index, sources and rejections, indexer lag and reorgs, WebSocket clients and disconnects, cache hit ratio, store writes. |
 | http://127.0.0.1:9090/alerts | Prometheus alert rules and their state |
 | http://127.0.0.1:9090/targets | Scrape status of the service |
 
@@ -545,6 +840,16 @@ a promtool unit test in [`alerts.test.yml`](deploy/prometheus/alerts.test.yml):
 | `LoadShedding` | Orders are turned away with `market_overloaded` for 2 minutes | warning |
 | `ServerErrorRateHigh` | More than 1% of requests end in 5xx for 5 minutes | warning |
 | `AuthenticationFailuresHigh` | More than one failed signature per second for 5 minutes | warning |
+| `PricefeedDown` | A price feed node fails scrapes for 1 minute | critical |
+| `NoIngestLeader` | No instance holds the ingest lease for 2 minutes | critical |
+| `IndexPriceStale` | A market has no fresh index source for 1 minute | critical |
+| `IndexPriceDegraded` | A market stays below its quorum for 5 minutes | warning |
+| `SourceFailing` | A source restarts more than 5 times in 10 minutes | warning |
+| `IndexerLagging` | An indexer stays more than 50 blocks behind for 10 minutes | warning |
+| `ChainReorgRolledBack` | An indexer rolled back a reorg | info |
+| `PriceHistoryDropped` | Updates could not be written to Postgres | warning |
+| `WebSocketSlowConsumers` | More than 10 clients dropped for reading too slowly in 5 minutes | warning |
+| `VenuePriceDeviates` | Orderflow's last trade is over 1% from the index for 5 minutes | warning |
 
 Queries worth knowing, all used by the dashboard:
 
@@ -556,7 +861,7 @@ sum(rate(orderflow_http_requests_total{status=~"5.."}[5m])) / sum(rate(orderflow
 ```
 
 `make monitoring-check` validates the Prometheus config, runs the alert
-unit tests and checks the dashboard JSON; CI runs it on every push.
+unit tests and checks the dashboard JSON files; CI runs it on every push.
 Grafana runs view-only for local use: anonymous viewers, no login form and
 basic auth off, so the stack ships no default admin password. In
 production `/metrics` belongs on an internal network only, and Grafana
@@ -564,7 +869,7 @@ sits behind single sign-on.
 
 ## Testing
 
-`make test` runs 110 tests, all offline:
+`make test` runs 193 tests, all offline:
 
 | Suite | Count | What it covers |
 |---|---|---|
@@ -574,18 +879,30 @@ sits behind single sign-on.
 | Infrastructure tests | 12 | TTLs and caps with paused time, retry policy, wire schema, metrics |
 | API unit and HTTP tests | 18 + 20 | Signing, validation, stop orders, discovery, rate limits, timeouts, HTTP metrics, the full router end to end |
 | Server tests | 9 | Config parsing, secret redaction, instrument catalog loading |
+| Market data tests | 23 + 3 x 256 cases | Index rule, staleness, outliers, quorum, candles, the aggregator, sinks with retries; properties: the index stays within the quotes used, ignores their order, and one manipulated source cannot move a live index |
+| Ingest tests | 26 | Every connector and both indexers against recorded mainnet and exchange payloads: swap decoding, exact sqrt price math, reorg rollback, `minContextSlot`, supervisor backoff |
+| Storage tests | 8 | Wire records round trip, candle merging, single flight under 500 concurrent readers |
+| Price feed tests | 14 + 9 | Config, feeds file, hub ordering and conflation, metrics; REST validation and cache headers, WebSocket snapshot, live updates, limits, rate limiting, shutdown close codes |
+
+`make test-integration` adds 6 tests against real Postgres 18 and Valkey 8
+in throwaway containers: Postgres candles equal the in-memory store's for
+every interval, swaps are idempotent and roll back, the leader lease is
+exclusive, and edge nodes get the Redis snapshot and then live updates.
+`make sdk` runs the TypeScript client's 7 tests on Node.
 
 Set `PROPTEST_CASES` for longer property runs; 20,000 cases take about two
 seconds in release mode.
 
 `make ci` runs the same checks as the pipeline: formatting, clippy with
-warnings as errors, and the tests. CI also starts the server and runs the
-scenario flows below.
+warnings as errors, and the tests. CI also runs the integration tests
+against Postgres and Valkey services, the SDK tests on Node 20 and 22,
+Terraform validation, both container builds, and starts both servers to
+run the scenario flows below.
 
 ## Scenario flows (Postman)
 
 [`postman/collections/Orderflow scenarios`](postman/collections/Orderflow%20scenarios)
-holds eight scenario flows with 78 requests and 229 assertions, stored in
+holds nine scenario flows with 88 requests and 260 assertions, stored in
 the Postman Collection v3 YAML format that Postman v12 reads and writes in
 Native Git mode: one `.request.yaml` file per request, with its tests
 inline, so changes to a flow review like code. Each flow is a folder that
@@ -603,6 +920,7 @@ signatures by hand.
 | 06 Stop orders | LINK-USD | Pending stops, a passed stop rejected, buy and sell stops firing, cancel |
 | 07 Idempotent retries | BTC-USD | Replay with the same key, key reuse, malformed key |
 | 08 Authentication and validation errors | BTC-USD | 401, 404, 405 and 422 problem documents |
+| 09 Market data | price feed | Prices, filters, the source breakdown, candles, sources, validation and not-found problems, metrics. Passes on a warm feed and right after a start |
 
 In the Postman desktop app (v12 or later):
 
@@ -647,6 +965,27 @@ The server reports every invalid setting at startup in a single message.
 Errors about credentials refer to the entry by position and never print
 its content.
 
+The price feed reads `PRICEFEED_*` variables, also listed in
+`.env.example`:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PRICEFEED_ROLE` | `all` | `all`, `ingest` or `edge` |
+| `PRICEFEED_BIND_ADDR` | `127.0.0.1:8090` | Listen address |
+| `PRICEFEED_FEEDS_FILE` | `config/marketdata.json` | Markets, sources and pools |
+| `PRICEFEED_DATABASE_URL` | none (memory) | Postgres; required for `edge` |
+| `PRICEFEED_REDIS_URL` | none | Redis or Valkey; required for `ingest` and `edge` |
+| `PRICEFEED_EVM_RPC_URL` | public Ethereum node | Provider URL, often with a key: keep it in `.env` |
+| `PRICEFEED_SOLANA_RPC_URL` | public Solana node | Same |
+| `PRICEFEED_COINGECKO_API_KEY` | none | Optional demo or pro key |
+| `PRICEFEED_SOURCES` | all configured | Comma separated subset, or `none` |
+| `PRICEFEED_KAFKA_BROKERS` | none | Consume Orderflow's trades (build with `--features kafka`) |
+| `PRICEFEED_WS_MAX_CONNECTIONS` / `_MAX_SUBSCRIPTIONS` | `10000` / `50` | Per node and per connection limits |
+
+URLs and keys are wrapped in a type that never prints, and every
+connector strips URLs from its error messages, because RPC URLs usually
+carry an API key.
+
 ## Project layout
 
 ```
@@ -656,14 +995,25 @@ crates/
   infrastructure/   adapters, feature "kafka" for rdkafka
   api/              HTTP layer (plus examples/sign.rs)
   server/           the `orderflow` binary
-config/instruments.json  assets and markets
-deploy/             Prometheus config, alert rules and tests, Grafana provisioning and dashboard
+  marketdata/       price feed core: index rule, candles, aggregator, ports
+  ingest/           connectors and chain indexers (plus tests/fixtures/ recorded payloads)
+  storage/          Postgres, Redis and cache adapters (plus migrations/)
+  pricefeed/        the `pricefeed` binary: REST, WebSocket, roles (plus examples/ws_load.rs)
+clients/typescript/ TypeScript client SDK and the orderflow-prices CLI
+config/
+  instruments.json  assets and markets of the exchange
+  marketdata.json   markets, sources and pools of the price feed
+deploy/
+  prometheus/       scrape config, alert rules and their tests
+  grafana/          provisioning and the two dashboards
+  terraform/        AWS: VPC, RDS, ElastiCache, ECS, ALB, CloudFront
 docs/adr/           architecture decision records
 docs/images/        README screenshots
-docs/openapi.yaml   API contract
+docs/openapi.yaml   exchange API contract
+docs/pricefeed-openapi.yaml  price feed API contract
 docs/errors.md      error catalog
 postman/            scenario flows (Collection v3 YAML), environment template
-scripts/            env bootstrap, Postman env writer, signed request helper
+scripts/            env bootstrap, Postman env writer, signed requests, integration tests
 ```
 
 ## Commit convention
@@ -679,8 +1029,16 @@ Commits follow [Conventional Commits](https://www.conventionalcommits.org):
   spreading them across nodes needs a routing layer.
 - Listing or delisting an instrument needs a restart (ADR 0004 describes
   the path to listing without one).
-- There is no streaming market data feed yet. `BroadcastPublisher` is the
-  starting point for a WebSocket feed.
+- The exchange does not use the index price yet. Price bands (reject
+  orders far from the index) and index-triggered stops are the natural
+  next step.
+- Price feed history keeps growing: `index_prices` needs time partitioning
+  and a retention job before it runs for months.
+- Solana prices carry the receive time, because account reads have no
+  block time, and WBTC is treated as BTC (ADR 0007).
+- The Terraform has never been applied. It passes `terraform validate`
+  and tflint; the RDS connection uses `sslmode=require`, and verifying
+  the RDS CA (`verify-full`) is the remaining hardening step.
 - Prices use `Decimal`. Integer ticks would make book comparisons cheaper,
   and the tick size needed for the conversion is already known per market.
 - Replay protection relies on the timestamp window. A short-lived nonce
