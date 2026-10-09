@@ -4,16 +4,30 @@
 all-features = true
 
 [advisories]
-# Any RustSec advisory (vulnerable, unmaintained or yanked) fails the build.
+# Any RustSec advisory (vulnerable, unmaintained or yanked) fails the build,
+# unless it is listed here with the reason it does not apply.
 yanked = "deny"
+ignore = [
+    # `paste` is a compile-time macro used by alloy-primitives. Its author
+    # archived it as finished; the advisory reports no vulnerability.
+    { id = "RUSTSEC-2024-0436", reason = "unmaintained compile-time macro, used by alloy-primitives; no known vulnerability" },
+]
 
 [licenses]
 # Permissive licenses only. Anything else needs a review before it is added.
 allow = [
     "Apache-2.0",
     "BSD-3-Clause",
+    # xxhash-rust, used by the redis client.
+    "BSL-1.0",
+    # Mozilla's CA root list as data (webpki-root-certs).
+    "CDLA-Permissive-2.0",
+    # The TLS crypto stack: ring, rustls-webpki and untrusted.
+    "ISC",
     "MIT",
     "Unicode-3.0",
+    # foldhash, through hashbrown in sqlx.
+    "Zlib",
 ]
 confidence-threshold = 0.9
 
