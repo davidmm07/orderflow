@@ -822,6 +822,17 @@ firing alerts. The HTTP panels show the rejections a real exchange sees:
 cancels of orders that already filled, stops placed too close to the
 market, invalid prices and clients with broken signatures.*
 
+![Price feed dashboard in Grafana during nine minutes of live sources, WebSocket clients and trading](docs/images/grafana-pricefeed.png)
+
+*Nine minutes of the compose stack on live sources: 15 markets live from one
+ingest leader, 3,000 WebSocket clients subscribed to six markets each and
+receiving about 5,900 frames per second (p50 under 20 ms and p99 under
+100 ms from publication), Orderflow trading within 10 bps of the index on
+seven markets, Uniswap swaps indexed four blocks behind the head, and
+bursts of 25 identical candle reads answered about 99% from the in-process
+cache. The Redis tier shows no hits because one edge node has no other
+node to share them with.*
+
 | URL | What is there |
 |---|---|
 | http://127.0.0.1:3000/d/orderflow | Grafana dashboard: health stats, orders and trades by market, matching latency, event pipeline, HTTP status codes, problems by code, route latency, load shedding and rate limits. Filter by market at the top. |
@@ -869,7 +880,7 @@ sits behind single sign-on.
 
 ## Testing
 
-`make test` runs 193 tests, all offline:
+`make test` runs 195 tests, all offline:
 
 | Suite | Count | What it covers |
 |---|---|---|
@@ -880,9 +891,9 @@ sits behind single sign-on.
 | API unit and HTTP tests | 18 + 20 | Signing, validation, stop orders, discovery, rate limits, timeouts, HTTP metrics, the full router end to end |
 | Server tests | 9 | Config parsing, secret redaction, instrument catalog loading |
 | Market data tests | 23 + 3 x 256 cases | Index rule, staleness, outliers, quorum, candles, the aggregator, sinks with retries; properties: the index stays within the quotes used, ignores their order, and one manipulated source cannot move a live index |
-| Ingest tests | 26 | Every connector and both indexers against recorded mainnet and exchange payloads: swap decoding, exact sqrt price math, reorg rollback, `minContextSlot`, supervisor backoff |
+| Ingest tests | 27 | Every connector and both indexers against recorded mainnet and exchange payloads: swap decoding, exact sqrt price math, reorg rollback, `minContextSlot`, supervisor backoff |
 | Storage tests | 8 | Wire records round trip, candle merging, single flight under 500 concurrent readers |
-| Price feed tests | 14 + 9 | Config, feeds file, hub ordering and conflation, metrics; REST validation and cache headers, WebSocket snapshot, live updates, limits, rate limiting, shutdown close codes |
+| Price feed tests | 15 + 9 | Config, feeds file, hub ordering and conflation, metrics; REST validation and cache headers, WebSocket snapshot, live updates, limits, rate limiting, shutdown close codes |
 
 `make test-integration` adds 7 tests against real Postgres 18 and Valkey 8
 in throwaway containers: Postgres candles equal the in-memory store's for
