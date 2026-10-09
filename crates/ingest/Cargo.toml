@@ -1,0 +1,43 @@
+[package]
+name = "orderflow-ingest"
+description = "Market data sources: CEX and aggregator connectors plus EVM and Solana indexers."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+# Orderflow's own trades, consumed from the event topic with librdkafka.
+kafka = ["dep:rdkafka"]
+
+[dependencies]
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+bs58.workspace = true
+chrono.workspace = true
+futures-util.workspace = true
+orderflow-application.workspace = true
+orderflow-domain.workspace = true
+orderflow-marketdata.workspace = true
+rdkafka = { workspace = true, optional = true }
+reqwest.workspace = true
+rustls.workspace = true
+rust_decimal.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+tokio-tungstenite.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+rust_decimal_macros.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "test-util"] }
+
+[lints]
+workspace = true
