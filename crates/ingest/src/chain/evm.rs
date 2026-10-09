@@ -251,13 +251,14 @@ impl UniswapV3Indexer {
         )))
     }
 
-    /// Indexes blocks `from..=to` and commits them with a checkpoint.
+    /// Indexes blocks `from..=to`, commits them with a checkpoint and
+    /// returns how many swaps were stored.
     async fn index_range(
         &self,
         progress: &mut Progress,
         from: u64,
         to: u64,
-    ) -> Result<(), SourceError> {
+    ) -> Result<usize, SourceError> {
         let addresses: Vec<String> = self
             .config
             .pools
@@ -329,7 +330,7 @@ impl UniswapV3Indexer {
                 "indexed"
             );
         }
-        Ok(())
+        Ok(swaps.len())
     }
 
     /// Publishes every pool's price as of the newest checkpoint.
@@ -401,7 +402,7 @@ impl Source for UniswapV3Indexer {
             }
             let to = safe.min(cursor + range);
             match self.index_range(&mut progress, cursor + 1, to).await {
-                Ok(()) => {}
+                Ok(swaps) => ctx.metrics.indexer_swaps(&self.config.name, swaps),
                 Err(SourceError::Rpc { message, .. }) if range > 1 && is_range_limit(&message) => {
                     range = (range / 2).max(1);
                     tracing::info!(
