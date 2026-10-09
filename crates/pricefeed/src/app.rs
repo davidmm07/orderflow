@@ -17,7 +17,7 @@ use axum::Router;
 use orderflow_application::Clock;
 use orderflow_infrastructure::MonotonicClock;
 use orderflow_ingest::{
-    HttpClient, Source, SourceContext,
+    HttpClient, Source, SourceContext, SourceError,
     chain::{HttpRpc, evm::UniswapV3Indexer, solana::WhirlpoolIndexer},
     connectors::{CoinGecko, Coinbase, Kraken},
     install_crypto_provider, supervise,
@@ -123,9 +123,27 @@ pub async fn build(settings: &Settings, feeds: Feeds) -> anyhow::Result<Applicat
             sinks.push(Arc::new(publisher));
             tasks.push(publisher_task);
         }
+        let sources = sources(settings, &feeds, &chain_store)?;
+        let connectors: Vec<&str> = sources.iter().map(|source| source.name()).collect();
+        let indexers: Vec<&str> = [
+            feeds
+                .uniswap
+                .as_ref()
+                .filter(|_| settings.source_enabled("uniswap_v3"))
+                .map(|config| config.name.as_str()),
+            feeds
+                .orca
+                .as_ref()
+                .filter(|_| settings.source_enabled("orca"))
+                .map(|config| config.name.as_str()),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        metrics.expect_sources(&connectors, &SourceError::KINDS, &indexers);
         let ingestion = Ingestion {
             markets: feeds.markets.clone(),
-            sources: sources(settings, &feeds, &chain_store)?,
+            sources,
             sinks,
             clock: clock.clone(),
             metrics: metrics.clone(),

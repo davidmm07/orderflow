@@ -52,6 +52,18 @@ impl SourceError {
         }
     }
 
+    /// Every `kind()` a supervisor can report as a failure. `Closed` is left
+    /// out because it only happens during shutdown.
+    pub const KINDS: [&'static str; 7] = [
+        "transport",
+        "http_status",
+        "rpc",
+        "decode",
+        "upstream",
+        "chain",
+        "store",
+    ];
+
     /// Short label for metrics.
     pub const fn kind(&self) -> &'static str {
         match self {
@@ -86,6 +98,25 @@ pub(crate) fn excerpt(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_failure_kind_is_listed_for_metrics() {
+        let failures = [
+            SourceError::Transport(String::new()),
+            SourceError::Status {
+                status: 429,
+                retry_after: None,
+            },
+            SourceError::rpc(-32005, ""),
+            SourceError::decode(""),
+            SourceError::upstream(""),
+            SourceError::Chain(String::new()),
+            SourceError::Store(StoreError::Unavailable(String::new())),
+        ];
+        let kinds: Vec<&str> = failures.iter().map(SourceError::kind).collect();
+        assert_eq!(kinds, SourceError::KINDS);
+        assert!(!SourceError::KINDS.contains(&SourceError::Closed.kind()));
+    }
 
     #[test]
     fn upstream_text_is_bounded_and_single_line() {

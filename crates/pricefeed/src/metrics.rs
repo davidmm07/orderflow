@@ -156,6 +156,26 @@ impl PricefeedMetrics {
         family.series.insert(label_string(labels), value);
     }
 
+    /// Creates the failure series of every running connector and the swap
+    /// and reorg series of every indexer at zero. `increase()` needs two
+    /// samples, so a counter that first appeared at 1 would hide the first
+    /// reorg or source failure from its alert.
+    pub fn expect_sources(&self, connectors: &[&str], error_kinds: &[&str], indexers: &[&str]) {
+        for connector in connectors {
+            for kind in error_kinds {
+                self.add(
+                    SOURCE_ERRORS,
+                    &[("connector", connector), ("kind", kind)],
+                    0,
+                );
+            }
+        }
+        for indexer in indexers {
+            self.add(INDEXER_SWAPS, &[("indexer", indexer)], 0);
+            self.add(INDEXER_REORGS, &[("indexer", indexer)], 0);
+        }
+    }
+
     pub fn ws_connection_opened(&self) {
         self.ws_connections.fetch_add(1, Ordering::Relaxed);
         self.add(WS_CONNECTIONS_TOTAL, &[("result", "accepted")], 1);
@@ -535,6 +555,22 @@ mod tests {
                 || text
                     .contains("pricefeed_cache_requests_total{tier=\"memory\",result=\"hit\"} 1")
         );
+    }
+
+    #[test]
+    fn running_sources_start_their_failure_and_reorg_series_at_zero() {
+        let metrics = PricefeedMetrics::new(&[], &[]);
+        metrics.expect_sources(
+            &["kraken", "uniswap_v3:ethereum"],
+            &["transport", "rpc"],
+            &["uniswap_v3:ethereum"],
+        );
+        let text = metrics.render(&PriceHub::new([]), &FixedClock);
+        assert!(
+            text.contains("pricefeed_source_errors_total{connector=\"kraken\",kind=\"rpc\"} 0")
+        );
+        assert!(text.contains("pricefeed_indexer_reorgs_total{indexer=\"uniswap_v3:ethereum\"} 0"));
+        assert!(text.contains("pricefeed_indexer_swaps_total{indexer=\"uniswap_v3:ethereum\"} 0"));
     }
 
     #[test]
