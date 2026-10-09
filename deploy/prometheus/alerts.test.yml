@@ -90,3 +90,69 @@ tests:
             exp_annotations:
               summary: Engine queues are full and orders are being turned away with 503.
               action: Look for a slow event sink or one market receiving a burst.
+
+  - name: a stale index price pages after a minute
+    interval: 1m
+    input_series:
+      - series: 'pricefeed_index_status{job="pricefeed", role="edge", market="SOL-USD", status="stale"}'
+        values: "0 0 1 1 1"
+      - series: 'pricefeed_index_status{job="pricefeed", role="edge", market="BTC-USD", status="stale"}'
+        values: "0 0 0 0 0"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: IndexPriceStale
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: IndexPriceStale
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              market: SOL-USD
+            exp_annotations:
+              summary: SOL-USD has no fresh index source; clients see the last known price.
+              action: Check pricefeed_source_errors_total for the market's sources, then the upstream status pages.
+
+  - name: losing every ingest leader pages
+    interval: 1m
+    input_series:
+      - series: 'pricefeed_leader{job="pricefeed", role="ingest", instance="a"}'
+        values: "1 1 0 0 0 0"
+      - series: 'pricefeed_leader{job="pricefeed", role="ingest", instance="b"}'
+        values: "0 0 0 0 0 0"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: NoIngestLeader
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: NoIngestLeader
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: No price feed instance holds the ingest lease, so no price is being computed.
+              action: Check that an ingest node runs and can reach Postgres; the lease is a Postgres advisory lock.
+
+  - name: indexer lag is per indexer
+    interval: 1m
+    input_series:
+      - series: 'pricefeed_indexer_head_block{indexer="uniswap_v3:ethereum"}'
+        values: "1000+5x20"
+      - series: 'pricefeed_indexer_cursor_block{indexer="uniswap_v3:ethereum"}'
+        values: "990x20"
+      - series: 'pricefeed_indexer_head_block{indexer="orca:solana"}'
+        values: "5000+150x20"
+      - series: 'pricefeed_indexer_cursor_block{indexer="orca:solana"}'
+        values: "5000+150x20"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: IndexerLagging
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: IndexerLagging
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              indexer: uniswap_v3:ethereum
+            exp_annotations:
+              summary: Indexer uniswap_v3:ethereum is more than 50 blocks behind the chain head.
+              action: The RPC node may be slow or rate limiting eth_getLogs. Switch PRICEFEED_EVM_RPC_URL to a provider endpoint.

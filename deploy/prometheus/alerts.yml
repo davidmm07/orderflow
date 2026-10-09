@@ -56,3 +56,92 @@ groups:
         annotations:
           summary: More than one failed signature per second for 5 minutes.
           action: A client is misconfigured or keys are being guessed. Correlate with request ids in the logs.
+
+  # Price feed. Runbook: KT_README.MD step 16.
+  - name: pricefeed
+    rules:
+      - alert: PricefeedDown
+        expr: up{job="pricefeed"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The price feed {{ $labels.role }} node has not answered a scrape for a minute."
+          action: Check the container and its last log lines. Edge nodes are interchangeable; an ingest outage stops all prices.
+
+      - alert: NoIngestLeader
+        expr: sum(pricefeed_leader{job="pricefeed"}) < 1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: No price feed instance holds the ingest lease, so no price is being computed.
+          action: Check that an ingest node runs and can reach Postgres; the lease is a Postgres advisory lock.
+
+      - alert: IndexPriceStale
+        expr: max by (market) (pricefeed_index_status{status="stale"}) == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.market }} has no fresh index source; clients see the last known price."
+          action: Check pricefeed_source_errors_total for the market's sources, then the upstream status pages.
+
+      - alert: IndexPriceDegraded
+        expr: max by (market) (pricefeed_index_status{status="degraded"}) == 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.market }} has fewer agreeing sources than its quorum."
+          action: GET /v1/prices/{market} shows which sources are stale or outliers.
+
+      - alert: SourceFailing
+        expr: sum by (connector) (increase(pricefeed_source_errors_total[10m])) > 5
+        labels:
+          severity: warning
+        annotations:
+          summary: "Source {{ $labels.connector }} failed more than 5 times in 10 minutes."
+          action: The supervisor keeps retrying with backoff. Look for its errors in the logs; a 429 means a rate limit or a missing API key.
+
+      - alert: IndexerLagging
+        expr: max by (indexer) (pricefeed_indexer_head_block - pricefeed_indexer_cursor_block) > 50
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Indexer {{ $labels.indexer }} is more than 50 blocks behind the chain head."
+          action: The RPC node may be slow or rate limiting eth_getLogs. Switch PRICEFEED_EVM_RPC_URL to a provider endpoint.
+
+      - alert: ChainReorgRolledBack
+        expr: increase(pricefeed_indexer_reorgs_total[15m]) > 0
+        labels:
+          severity: info
+        annotations:
+          summary: "Indexer {{ $labels.indexer }} rolled back a chain reorganization."
+          action: Nothing to do for shallow reorgs. Repeated ones suggest raising the confirmations setting.
+
+      - alert: PriceHistoryDropped
+        expr: increase(pricefeed_store_dropped_total[5m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: Price updates were not written to Postgres; live prices are unaffected.
+          action: Check Postgres health and pricefeed_store_failures_total. Candles for the gap will be incomplete.
+
+      - alert: WebSocketSlowConsumers
+        expr: sum(increase(pricefeed_ws_disconnects_total{reason="slow_consumer"}[5m])) > 10
+        labels:
+          severity: warning
+        annotations:
+          summary: More than 10 WebSocket clients were dropped for not reading fast enough in 5 minutes.
+          action: Usually client side. If it spreads, check edge node CPU and network before scaling out.
+
+      - alert: VenuePriceDeviates
+        expr: max by (market) (abs(pricefeed_monitor_deviation_bps{source="orderflow"})) > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Orderflow's last trade on {{ $labels.market }} is more than 1% away from the index."
+          action: A thin book or a stuck market maker. Compare the book with GET /v1/prices/{market} before acting.
