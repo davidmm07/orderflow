@@ -44,8 +44,77 @@ jobs:
       - uses: actions/checkout@v4
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
-      # Compiles librdkafka from source and lints the adapter behind the flag.
-      - run: cargo clippy -p orderflow-server --features kafka --all-targets --locked
+      # Compiles librdkafka from source and lints both Kafka adapters: the
+      # exchange's publisher and the price feed's trade consumer.
+      - run: >-
+          cargo clippy -p orderflow-server -p orderflow-pricefeed
+          --features orderflow-server/kafka,orderflow-pricefeed/kafka
+          --all-targets --locked
+
+  storage:
+    name: Postgres and Valkey integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18.6-alpine
+        env:
+          POSTGRES_USER: pricefeed
+          POSTGRES_DB: pricefeed
+          # A database that lives as long as this job and holds no data:
+          # trust auth instead of a password in the workflow file.
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pricefeed -d pricefeed"
+          --health-interval 2s --health-timeout 5s --health-retries 30
+      valkey:
+        image: valkey/valkey:8.1.10-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 2s --health-timeout 5s --health-retries 30
+    env:
+      PRICEFEED_TEST_DATABASE_URL: postgres://pricefeed@localhost:5432/pricefeed
+      PRICEFEED_TEST_REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      # The adapter tests marked #[ignore] need these two services.
+      - run: cargo test -p orderflow-storage --locked -- --ignored
+
+  sdk:
+    name: TypeScript SDK and CLI (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [20, 22]
+    defaults:
+      run:
+        working-directory: clients/typescript
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: clients/typescript/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+
+  terraform:
+    name: Terraform validate and lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+      # Validation only: no credentials, no backend, nothing is applied.
+      - run: make tf-validate
+      - run: docker run --rm -v "$PWD/deploy/terraform:/data" -w /data ghcr.io/terraform-linters/tflint:v0.59.1
 
   flows:
     name: Postman scenario flows
@@ -55,16 +124,22 @@ jobs:
       - uses: actions/checkout@v4
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build -p orderflow-server --locked
-      # Throwaway credentials that live only on this runner.
-      - name: Start the server
+      - run: cargo build -p orderflow-server -p orderflow-pricefeed --locked
+      # Throwaway credentials that live only on this runner. The price feed
+      # runs without sources: CI must not depend on exchanges being up, and
+      # flow 09 checks the cold-start contract instead.
+      - name: Start the servers
         run: |
           printf 'ORDERFLOW_API_CREDENTIALS=trader-a-key:trader-a:%s,trader-b-key:trader-b:%s\n' \
             "$(openssl rand -hex 32)" "$(openssl rand -hex 32)" > .env
           ./scripts/postman-env.sh
           ./target/debug/orderflow > server.log 2>&1 &
-          for _ in $(seq 1 30); do curl -sf localhost:8080/health/ready && exit 0; sleep 1; done
-          cat server.log
+          PRICEFEED_SOURCES=none ./target/debug/pricefeed > pricefeed.log 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -sf localhost:8080/health/ready && curl -sf localhost:8090/health/ready && exit 0
+            sleep 1
+          done
+          cat server.log pricefeed.log
           exit 1
       - run: make flows-lint
       - run: make flows
@@ -91,4 +166,6 @@ jobs:
     needs: [lint, test]
     steps:
       - uses: actions/checkout@v4
-      - run: docker build --tag orderflow:ci .
+      - run: docker build --target orderflow --tag orderflow:ci .
+      # Shares the build stage with the image above, so it only adds a layer.
+      - run: docker build --target pricefeed --tag pricefeed:ci .
