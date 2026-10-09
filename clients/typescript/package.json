@@ -1,0 +1,39 @@
+{
+  "name": "@orderflow/prices",
+  "version": "0.1.0",
+  "description": "Typed client for the Orderflow price feed: REST calls and a reconnecting WebSocket stream.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "orderflow-prices": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test dist/test/",
+    "prices": "node dist/cli.js"
+  },
+  "dependencies": {
+    "ws": "~8.21.3"
+  },
+  "devDependencies": {
+    "@types/node": "~22.20.5",
+    "@types/ws": "~8.18.2",
+    "typescript": "~7.0.2"
+  }
+}
