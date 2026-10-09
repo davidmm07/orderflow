@@ -884,10 +884,11 @@ sits behind single sign-on.
 | Storage tests | 8 | Wire records round trip, candle merging, single flight under 500 concurrent readers |
 | Price feed tests | 14 + 9 | Config, feeds file, hub ordering and conflation, metrics; REST validation and cache headers, WebSocket snapshot, live updates, limits, rate limiting, shutdown close codes |
 
-`make test-integration` adds 6 tests against real Postgres 18 and Valkey 8
+`make test-integration` adds 7 tests against real Postgres 18 and Valkey 8
 in throwaway containers: Postgres candles equal the in-memory store's for
 every interval, swaps are idempotent and roll back, the leader lease is
-exclusive, and edge nodes get the Redis snapshot and then live updates.
+exclusive, edge nodes get the Redis snapshot and then live updates, and the
+subscription keepalive survives the subscribed-mode ping reply.
 `make sdk` runs the TypeScript client's 7 tests on Node.
 
 Set `PROPTEST_CASES` for longer property runs; 20,000 cases take about two

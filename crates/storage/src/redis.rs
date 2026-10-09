@@ -145,12 +145,7 @@ async fn follow_once(
     loop {
         tokio::select! {
             () = shutdown.cancelled() => return Ok(()),
-            _ = ping.tick() => {
-                tokio::time::timeout(Duration::from_secs(5), sink.ping::<String>())
-                    .await
-                    .map_err(|_| StoreError::Unavailable("subscription ping timed out".into()))?
-                    .map_err(unavailable)?;
-            }
+            _ = ping.tick() => keepalive(&mut sink).await?,
             message = stream.next() => {
                 let Some(message) = message else {
                     return Err(StoreError::Unavailable("subscription closed".into()));
@@ -163,6 +158,19 @@ async fn follow_once(
             }
         }
     }
+}
+
+/// Checks that a subscribed connection still answers.
+///
+/// In subscribed mode Redis replies to PING with `["pong", ""]` instead of
+/// `PONG`, so the reply is accepted whatever its shape: any answer within
+/// the timeout proves the connection is alive.
+async fn keepalive(sink: &mut redis::aio::PubSubSink) -> Result<(), StoreError> {
+    tokio::time::timeout(Duration::from_secs(5), sink.ping::<redis::Value>())
+        .await
+        .map_err(|_| StoreError::Unavailable("subscription ping timed out".into()))?
+        .map(|_| ())
+        .map_err(unavailable)
 }
 
 /// Shared second-tier cache for candle reads.
@@ -261,6 +269,24 @@ mod tests {
     use orderflow_marketdata::CandleInterval;
 
     use super::*;
+
+    /// Regression: the keepalive used to expect a plain string and failed
+    /// on every ping, reconnecting the subscription every 15 seconds.
+    #[tokio::test]
+    #[ignore = "needs PRICEFEED_TEST_REDIS_URL"]
+    async fn keepalive_accepts_the_subscribed_mode_ping_reply() {
+        let url = std::env::var("PRICEFEED_TEST_REDIS_URL").expect("PRICEFEED_TEST_REDIS_URL");
+        let (mut sink, _stream) = client(&url)
+            .unwrap()
+            .get_async_pubsub()
+            .await
+            .unwrap()
+            .split();
+        sink.subscribe(PRICE_CHANNEL).await.unwrap();
+        for _ in 0..3 {
+            keepalive(&mut sink).await.unwrap();
+        }
+    }
 
     #[test]
     fn candle_keys_are_stable_and_distinct() {
