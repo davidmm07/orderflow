@@ -1,0 +1,10 @@
+# Copy to terraform.tfvars (git-ignored) and fill in.
+environment        = "staging"
+region             = "us-east-1"
+availability_zones = ["us-east-1a", "us-east-1b"]
+image_tag          = "<git sha>"
+certificate_arn    = "arn:aws:acm:us-east-1:<account>:certificate/<id>"
+origin_domain_name = "pricefeed-origin.example.com"
+
+# Provider URLs with keys: pass through the environment instead of this
+# file, for example TF_VAR_evm_rpc_url.

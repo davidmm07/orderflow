@@ -24,3 +24,12 @@ postman/environments/*local.environment.yaml
 
 # Postman writes each developer's own cloud workspace binding here
 .postman/
+
+# Terraform: provider caches, state (holds generated secrets) and variable
+# files (may hold credentials). The lock file and the example are committed.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
