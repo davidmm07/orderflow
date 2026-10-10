@@ -143,10 +143,13 @@ pub(crate) fn aggregate(
 ) -> Aggregate {
     let mut states: Vec<QuoteState> = quotes
         .iter()
+        // Freshness comes first for every role: a venue whose last trade is
+        // old is as stale as an exchange that stopped quoting, and must not
+        // keep reporting a deviation from that old price.
         .map(|quote| match quote.spec.role {
+            _ if !is_fresh(quote, now) => QuoteState::Stale,
             SourceRole::Monitor => QuoteState::Monitor,
-            SourceRole::Index if is_fresh(quote, now) => QuoteState::Used,
-            SourceRole::Index => QuoteState::Stale,
+            SourceRole::Index => QuoteState::Used,
         })
         .collect();
 
@@ -418,6 +421,15 @@ mod tests {
         assert_eq!(result.status, PriceStatus::Live);
         assert_eq!(result.components[1].state, QuoteState::Monitor);
         assert_eq!(result.components[1].deviation_bps, Some(dec!(-1000)));
+
+        // Once the venue's last trade is older than its max age, it is
+        // stale like any other source.
+        let later = run(
+            policy,
+            200,
+            &[(&a, dec!(100), 200), (&venue, dec!(90), 100)],
+        );
+        assert_eq!(later.components[1].state, QuoteState::Stale);
     }
 
     #[test]
