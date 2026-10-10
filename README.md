@@ -115,8 +115,9 @@ With Node.js 20 or later, the TypeScript CLI streams them live:
 make prices MARKETS="BTC-USD ETH-USDC SOL-USDC"
 ```
 
-To run every scenario flow against the running server (see
-[Scenario flows](#scenario-flows-postman)):
+With both services running, run every scenario flow against them (see
+[Scenario flows](#scenario-flows-postman)). `make flows` first checks that
+both answer and says which command starts a missing one:
 
 ```bash
 make postman-env
@@ -945,13 +946,17 @@ In the Postman desktop app (v12 or later):
    inside it. Postman then writes its workspace binding to `.postman/`,
    which stays local and git-ignored.
 3. Switch to **Local View**, select the `Orderflow local` environment, start
-   the server, and run a folder or the whole collection with the
-   Collection Runner.
+   both services (`make run` and `make run-pricefeed`, or `make up`), and
+   run a folder or the whole collection with the Collection Runner.
 
 From a terminal, the same flows run with the Postman CLI (Newman cannot
 read the v3 format): `make flows` runs all of them,
 `make flows FLOW="06 Stop orders"` runs one, and `make flows-lint` checks
-the files against the collection schema. Each flow uses its own market and
+the files against the collection schema. Flows 01 to 08 call the exchange
+and flow 09 calls the price feed, so running all of them needs both.
+`make flows` checks that first: a request to a service that is down only
+reports a refused connection and runs none of its tests, so the check
+stops early and prints the command that starts the missing service. Each flow uses its own market and
 cleans up after itself, so the flows can run again and again on the same
 server. The first request of flow 01 is a preflight: when it fails, its
 message says whether the server runs an older build or the environment is
@@ -1025,7 +1030,7 @@ docs/openapi.yaml   exchange API contract
 docs/pricefeed-openapi.yaml  price feed API contract
 docs/errors.md      error catalog
 postman/            scenario flows (Collection v3 YAML), environment template
-scripts/            env bootstrap, Postman env writer, signed requests, integration tests
+scripts/            env bootstrap, Postman env writer, flows preflight, signed requests, integration tests
 ```
 
 ## Commit convention

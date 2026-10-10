@@ -51,13 +51,24 @@ Keep three design rules in mind while you read the code:
 
 ## Step 1. Set up your machine
 
+Needed from step 2 on:
+
 | Tool | Version | Used for |
 |---|---|---|
 | rustup | any recent | Installs the pinned toolchain automatically |
 | Rust | 1.98.1, pinned in `rust-toolchain.toml` | Build and tests |
-| C toolchain (`gcc`, `make`) | any | Only for `--features kafka`, which compiles librdkafka from source |
-| openssl, curl | any | `make env` and the request helper script |
-| Docker with Compose v2 | any recent | Only for the Kafka, Prometheus and Grafana stack (steps 8 and 11) |
+| make | any | Every `make` target in this guide |
+| openssl, curl | any | `make env`, the request helper script and the check `make flows` runs first |
+| Node.js with npm | 20 or later | `make flows` (the Postman CLI runs through `npx`), `make prices`, `make sdk` |
+| Internet access | | The price feed reads public exchange APIs and public Ethereum and Solana nodes. Offline, run it with `PRICEFEED_SOURCES=none` |
+
+Needed only for some steps:
+
+| Tool | Version | Used for |
+|---|---|---|
+| Docker with Compose v2 | any recent | `make up` (steps 8, 11, 15 and 16), `make monitoring-check`, `make test-integration` |
+| C toolchain (`gcc`) | any | Only for `--features kafka` outside Docker, which compiles librdkafka from source |
+| Terraform | 1.9 or later | Only for `make tf-validate` (step 16) |
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -84,8 +95,8 @@ clippy and rustfmt, so everyone on the team uses the same compiler.
 make test
 ```
 
-After the first build, six suites with 110 tests should pass in well under a
-minute:
+After the first build, ten suites with 195 tests should pass in well under a
+minute. They need nothing running and no network:
 
 | Suite | Where | What it checks |
 |---|---|---|
@@ -95,6 +106,14 @@ minute:
 | Infrastructure tests | `crates/infrastructure/src/**` | TTLs, caps, retries and backoff with paused time; wire schema; metrics |
 | API tests | [`crates/api/tests/http.rs`](crates/api/tests/http.rs) and unit tests | The real router end to end, with in-memory adapters |
 | Server tests | [`config.rs`](crates/server/src/config.rs) | Env parsing and secret redaction |
+| Market data tests | `crates/marketdata/src/**` | The index rule (median, outliers, quorum, staleness), candles, the aggregator and its sinks, with property tests |
+| Ingest tests | `crates/ingest/src/**` with [`tests/fixtures`](crates/ingest/tests/fixtures) | Every connector and both chain indexers against recorded exchange and mainnet responses |
+| Storage tests | `crates/storage/src/**` | Wire records, candle merging, cache coalescing |
+| Price feed tests | `crates/pricefeed/src/**` and [`tests/api.rs`](crates/pricefeed/tests/api.rs) | Config, the hub, metrics, REST and WebSocket end to end in process |
+
+Two more suites need extra tools and come later: `make sdk` tests the
+TypeScript client with Node.js (step 14), and `make test-integration` runs
+the storage adapters against Postgres and Valkey in Docker (step 16).
 
 Then run the same checks as CI:
 
@@ -106,17 +125,34 @@ make ci
 
 ---
 
-## Step 3. Run the server and place your first order
+## Step 3. Run both services and place your first order
+
+The repository builds two services. Keep both running, each in its own
+terminal, until step 8; the scenario flows in step 4 call both.
+
+| Service | Start it | Port | Needs |
+|---|---|---|---|
+| Exchange (`orderflow`) | `make run` | 8080 | `.env`, created by `make env` |
+| Price feed (`pricefeed`) | `make run-pricefeed` | 8090 | Nothing. Internet for live prices, or `PRICEFEED_SOURCES=none` |
+| Both, plus Kafka, Postgres, Valkey, Prometheus and Grafana | `make up` | the same ports, plus 9090 and 3000 | Docker. Introduced in step 8 |
+
+Run the services either locally or with `make up`, never both at once:
+they use the same ports.
+
+### Configuration
 
 Create your local configuration. This copies `.env.example` to `.env` and
 fills in two traders, `trader-a` and `trader-b`, each with a newly
-generated API secret. Two accounts are needed to see trades, because an
-account never trades with itself. `.env` is git-ignored. Do not commit it,
-and do not paste its contents into tickets or chats.
+generated API secret, and a database password that only `make up` uses.
+Two accounts are needed to see trades, because an account never trades
+with itself. `.env` is git-ignored. Do not commit it, and do not paste its
+contents into tickets or chats.
 
 ```bash
 make env
 ```
+
+### Terminal 1: the exchange
 
 Start the server with the log event sink and readable logs:
 
@@ -124,7 +160,7 @@ Start the server with the log event sink and readable logs:
 make run
 ```
 
-In a second terminal, call the public endpoints:
+In another terminal, call the public endpoints:
 
 ```bash
 curl -s localhost:8080/health/ready
@@ -174,36 +210,82 @@ scripts/signed-request.sh POST /v1/markets/BTC-USD/orders '{"side":"up","type":"
 A single `422` response lists every invalid field. The codes are described
 in [docs/errors.md](docs/errors.md).
 
+### Terminal 2: the price feed
+
+The price feed publishes one index price per market, computed from
+exchange APIs and its own Ethereum and Solana indexers. Steps 14 to 16
+explain it. For now it only has to run, and it needs no credentials:
+
+```bash
+make run-pricefeed
+```
+
+Its first build takes a few minutes. Then, in another terminal:
+
+```bash
+curl -s localhost:8090/health/ready
+```
+
+```bash
+curl -s localhost:8090/v1/prices/BTC-USD
+```
+
+The second call answers `503 price_unavailable` for the first seconds,
+until at least one source has reported, and then a price with its sources.
+Without internet access the sources cannot report; start it with
+`PRICEFEED_SOURCES=none make run-pricefeed` instead, and it serves the same
+API with no prices.
+
 > Checkpoint: you have seen a `201`, a self-trade cancel, a trade between
 > two accounts, a `422` with several field errors, and your order in the
-> book.
+> book. Both `localhost:8080/health/ready` and `localhost:8090/health/ready`
+> answer `200`.
 
 ---
 
 ## Step 4. Run the scenario flows
 
-`postman/collections/Orderflow scenarios/` holds eight scenario flows in the
+`postman/collections/Orderflow scenarios/` holds nine scenario flows in the
 Postman Collection v3 YAML format, the format Postman v12 uses for Native
 Git. Every request is its own `.request.yaml` file with its tests inline;
 each folder has a `.resources/definition.yaml`. A flow runs top to bottom,
 checks every response and passes ids from one request to the next. It is
-the fastest way to see the whole API working, and CI runs the same flows on
+the fastest way to see both APIs working, and CI runs the same flows on
 every push.
 
-| Flow | Market | What it shows |
-|---|---|---|
-| 01 Discovery and health | all | Setup preflight, probes, assets, market filters, one market, book, metrics |
-| 02 Limit order lifecycle | LTC-USD | Place, read, owner-only access, cancel, cancel twice |
-| 03 Matching and partial fills | ETH-USD | Partial fill at the maker price, market order, last price |
-| 04 Time in force - IOC, FOK and market | SOL-USD | IOC, FOK in both outcomes, market order with no liquidity |
-| 05 Post-only and self-trade prevention | AVAX-USD | Post-only rejection, `cancel_newest`, `cancel_oldest` |
-| 06 Stop orders | LINK-USD | Pending stops, a passed stop rejected, buy and sell stops firing, cancel |
-| 07 Idempotent retries | BTC-USD | Replay with the same key, key reuse, malformed key |
-| 08 Authentication and validation errors | BTC-USD | 401, 404, 405 and 422 problem documents |
+| Flow | Calls | Market | What it shows |
+|---|---|---|---|
+| 01 Discovery and health | exchange | all | Setup preflight, probes, assets, market filters, one market, book, metrics |
+| 02 Limit order lifecycle | exchange | LTC-USD | Place, read, owner-only access, cancel, cancel twice |
+| 03 Matching and partial fills | exchange | ETH-USD | Partial fill at the maker price, market order, last price |
+| 04 Time in force - IOC, FOK and market | exchange | SOL-USD | IOC, FOK in both outcomes, market order with no liquidity |
+| 05 Post-only and self-trade prevention | exchange | AVAX-USD | Post-only rejection, `cancel_newest`, `cancel_oldest` |
+| 06 Stop orders | exchange | LINK-USD | Pending stops, a passed stop rejected, buy and sell stops firing, cancel |
+| 07 Idempotent retries | exchange | BTC-USD | Replay with the same key, key reuse, malformed key |
+| 08 Authentication and validation errors | exchange | BTC-USD | 401, 404, 405 and 422 problem documents |
+| 09 Market data | price feed | BTC-USD, ETH-USDC | Index prices, filters, the source breakdown, candles, sources, validation and not-found problems, metrics |
 
-First write the `Orderflow local` environment from your `.env`. It goes to
+### Before you run them
+
+Running every flow needs all four of these. Each one is a command you
+have already met; the list is here because skipping any of them makes
+flows fail.
+
+| # | Requirement | Command | Flows that fail without it |
+|---|---|---|---|
+| 1 | `.env` with two traders | `make env` (step 3) | 01 to 08 |
+| 2 | The exchange is running on port 8080 | `make run` (step 3, terminal 1) | 01 to 08 |
+| 3 | The price feed is running on port 8090 | `make run-pricefeed` (step 3, terminal 2) | 09 |
+| 4 | The `Orderflow local` Postman environment | `make postman-env` (below) | 01 to 08 |
+
+Flow 09 passes whether the price feed has prices or not: right after a
+start, or with `PRICEFEED_SOURCES=none`, it checks the "no price yet"
+contract instead.
+
+Write the `Orderflow local` environment from your `.env`. It goes to
 `postman/environments/orderflow-local.environment.yaml`, holds your
-secrets, is git-ignored and must not be shared.
+secrets, is git-ignored and must not be shared. Run it again whenever
+`.env` changes.
 
 ```bash
 make postman-env
@@ -220,8 +302,11 @@ make postman-env
    `Orderflow local` and `Orderflow template` environments appear on their
    own; nothing needs importing.
 3. Select the `Orderflow local` environment.
-4. With the server from step 3 running, open the collection, click
+4. With both services from step 3 running, open the collection, click
    **Run**, and run one folder or all of them with the Collection Runner.
+   The app has no check for missing services: if every request of a flow
+   shows `connect ECONNREFUSED`, the service that flow calls is not
+   running (see the table above).
 
 The collection script signs every private request, so you never compute a
 signature by hand. Edits you make in Local View are saved straight into the
@@ -236,10 +321,24 @@ The flows run with the Postman CLI, installed on demand through `npx`
 make flows
 ```
 
-To run a single flow:
+`make flows` first checks that every service the flows call is ready. If
+one is missing it stops before running anything and prints the command
+that starts it, for example:
+
+```text
+The price feed is not ready at http://127.0.0.1:8090 (HTTP 000; 000 means nothing is listening).
+  Flow "09 Market data" calls it.
+  Start it:               make run-pricefeed
+```
+
+To run a single flow, which only needs the service that flow calls:
 
 ```bash
 make flows FLOW="06 Stop orders"
+```
+
+```bash
+make flows FLOW="09 Market data"
 ```
 
 To check the files against the collection schema after editing them:
@@ -254,11 +353,18 @@ restart the server to start from empty books.
 
 ### When the flows fail
 
-The first request of flow 01, `Preflight - server build and environment`,
-checks the setup. Read its failure message first.
+`make flows` reports a missing service before it starts. Once it runs, the
+first request of flow 01, `Preflight - server build and environment`,
+checks the rest of the setup. Read its failure message first.
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| `make flows` stops with `Orderflow is not ready at ...` | The exchange is not running, or still starting | `make run` in its own terminal, or `make up` |
+| `make flows` stops with `The price feed is not ready at ...` | The price feed is not running. Its first build takes a few minutes | `make run-pricefeed` in its own terminal, or `make up` |
+| Every request of flow 09 shows `connect ECONNREFUSED 127.0.0.1:8090` in the Postman app | Same cause; the app does not run the check | Start the price feed, then run the flow again |
+| `make flows` stops with `No Postman environment at ...` | `make postman-env` was never run | Run it |
+| `make run` or `make run-pricefeed` fails with `Address already in use` | The Docker stack from `make up` holds ports 8080 and 8090 | `make down`, or keep the stack and run the flows against it |
+| `make up` stops asking for `PRICEFEED_DB_PASSWORD` | `.env` was created before the price feed existed | `make pricefeed-env`, then `make up` |
 | Preflight: `GET /v1/assets must answer 200. An older build answers 404` | The server on port 8080 runs a build from before the flows existed, often a `make up` stack started earlier | Stop it and start the current code: `make run`, or `make down` then `make up` to rebuild the image |
 | Preflight: `trader_a_key is empty`, or signed requests stop with `Environment is missing trader_a_key...` | The `Orderflow template` environment is selected, or `make postman-env` was never run | Run `make postman-env` and select `Orderflow local` |
 | `make postman-env` says `.env` has 1 trader | `.env` was created before `make env` made two traders | `scripts/bootstrap-env.sh --add-trader`, restart the server, run `make postman-env` again |
@@ -274,7 +380,7 @@ scripts/bootstrap-env.sh --add-trader
 ```
 
 > Checkpoint: the preflight passes, and the Collection Runner (or
-> `make flows`) reports 0 failed requests and 0 failed assertions.
+> `make flows`) reports 88 requests and 260 assertions with 0 failed.
 
 ---
 
@@ -425,14 +531,29 @@ and has no Redpanda-specific code, so production can use any
 Kafka-compatible cluster. [ADR 0005](docs/adr/0005-redpanda-as-local-kafka.md)
 explains the choice.
 
-Read [ADR 0003](docs/adr/0003-event-delivery-and-durability.md). Stop the
-server from step 3, because the stack uses the same port 8080, and start
-Redpanda (Kafka compatible) with the production image. Compose reads your
-credentials from `.env`.
+Read [ADR 0003](docs/adr/0003-event-delivery-and-durability.md). This step
+and step 11 use the Docker stack. Stop both services from step 3 (Ctrl+C in
+each terminal), because the stack uses the same ports 8080 and 8090, and
+start everything from the production images:
 
 ```bash
 make up
 ```
+
+`make up` builds two images and starts the exchange publishing to Redpanda
+(Kafka compatible), the price feed as an ingest node and an edge node on
+Postgres and Valkey, and Prometheus and Grafana. The first build takes
+several minutes. Compose reads your trader credentials and the database
+password from `.env`. If it stops asking for `PRICEFEED_DB_PASSWORD`, your
+`.env` was created before the price feed existed; add the password and
+try again:
+
+```bash
+make pricefeed-env
+```
+
+The stack serves the same two ports, so everything from steps 3 and 4
+works against it, `make flows` included.
 
 ```bash
 scripts/signed-request.sh POST /v1/markets/ETH-USD/orders '{"side":"sell","type":"limit","price":"3200","quantity":"1.5"}'
@@ -603,7 +724,8 @@ curl -s localhost:8080/metrics | grep '^orderflow_'
 `make up` also starts Prometheus and Grafana. Try this once to see the
 whole loop:
 
-1. Start the stack and generate traffic with the scenario flows:
+1. Start the stack, if it is not still up from step 8, and generate
+   traffic with the scenario flows:
 
    ```bash
    make up
@@ -615,7 +737,11 @@ whole loop:
 
 2. Open http://127.0.0.1:3000/d/orderflow. The dashboard refreshes every 5
    seconds; the market filter at the top narrows the engine panels.
-3. Open http://127.0.0.1:9090/alerts and see six rules, all inactive.
+3. Open http://127.0.0.1:9090/alerts and see sixteen rules in two groups,
+   `orderflow` and `pricefeed`, all inactive at first. Shortly after
+   `make flows`, `VenuePriceDeviates` turns pending: the flows trade
+   ETH-USD at 3000, far from the real market, and the price feed reports
+   the gap. It clears by itself once those trades are five minutes old.
 4. Stop the service with `docker compose stop orderflow`. After about a
    minute `OrderflowDown` goes from pending to firing, and the dashboard's
    "Firing alerts" stat turns red. Start it again with
@@ -631,6 +757,13 @@ make monitoring-check
 To change the dashboard, edit `deploy/grafana/dashboards/orderflow.json`
 (Grafana reloads it within 10 seconds); edits made in the Grafana UI are
 not saved.
+
+When you are done, stop the stack. Steps 12 and 13 need nothing running,
+and step 14 starts the price feed locally again.
+
+```bash
+make down
+```
 
 Shutdown sequence on SIGTERM: HTTP stops accepting connections, in-flight
 requests finish, each market engine drains its queue, the outbox closes,
@@ -740,8 +873,11 @@ many sources at once, and serves the answer to many clients. Read the
 [README section](README.md#market-data-the-price-feed) first, then ADR
 [0006](docs/adr/0006-one-index-price-from-many-sources.md).
 
-Run it. It needs no `.env` entries: it calls public exchange APIs and
-public Ethereum and Solana RPC nodes, and keeps history in memory:
+This step uses the price feed started locally, as in step 3. If the Docker
+stack is still up, stop it first with `make down`: both use port 8090.
+Started locally, the price feed needs no `.env` entries: it calls public
+exchange APIs and public Ethereum and Solana RPC nodes, and keeps history
+in memory:
 
 ```bash
 make run-pricefeed
@@ -762,7 +898,8 @@ pools read straight from Solana. Each has a `state` (`used`, `outlier`,
 `stale`, `monitor`) and its distance from the index in basis points.
 
 Watch prices live with the TypeScript CLI (needs Node.js 20 or later; the
-first run installs and builds it):
+first run installs and builds it, and `make sdk` runs the client's own
+tests):
 
 ```bash
 make prices MARKETS="BTC-USD ETH-USDC SOL-USDC"
@@ -830,7 +967,9 @@ They run offline:
 cargo test -p orderflow-ingest
 ```
 
-With `make up` running, look at what the indexer stored:
+The rest of this step, and step 16, use the Docker stack, where the
+indexer writes to Postgres. Stop the local price feed (Ctrl+C), run
+`make up`, give the indexer a minute, then look at what it stored:
 
 ```bash
 docker compose exec postgres psql -U pricefeed -c "SELECT pool, block_number, price, amount0, amount1 FROM dex_swaps ORDER BY block_number DESC LIMIT 5"
@@ -931,30 +1070,31 @@ never applied from this repository.
 `make help` prints this list. The step that introduces each command explains
 it in context.
 
-| Command | What it does | Introduced in |
-|---|---|---|
-| `make env` | Creates `.env` with two traders and fresh API secrets | Step 3 |
-| `make run` | Runs the server locally with the log event sink | Step 3 |
-| `make test` | Runs every test in the workspace | Step 2 |
-| `make lint` | Checks formatting and runs clippy with warnings as errors | Step 13 |
-| `make fmt` | Formats the code | Step 13 |
-| `make ci` | Runs lint and tests, the same checks as the CI pipeline | Step 2 |
-| `make bench` | Benchmarks the matching engine | Step 7 |
-| `make postman-env` | Writes the `Orderflow local` Postman environment from `.env` | Step 4 |
-| `make flows` | Runs the Postman scenario flows; `FLOW="06 Stop orders"` runs one | Step 4 |
-| `make flows-lint` | Validates the flows against the Postman collection schema | Step 4 |
-| `make up` | Builds and starts the service with Redpanda, Prometheus and Grafana | Step 8 |
-| `make consume` | Prints events from the topic as they arrive | Step 8 |
-| `make topics` | Shows the topic's partitions and how many records each holds | Step 8 |
-| `make down` | Stops the stack and removes its volumes | Step 8 |
-| `make monitoring-check` | Validates the Prometheus config, tests the alert rules, checks the dashboards | Step 11 |
-| `make run-pricefeed` | Runs the price feed locally with live public sources and in-memory history | Step 14 |
-| `make prices` | Prints index prices with the TypeScript CLI; `MARKETS="BTC-USD ETH-USD"` streams them | Step 14 |
-| `make sdk` | Builds and tests the TypeScript client and CLI | Step 14 |
-| `make pricefeed-env` | Adds the price feed database password to an existing `.env` | Step 16 |
-| `make load-test` | WebSocket fanout load test; `CONNECTIONS`, `LOAD_SECONDS`, `LOAD_URL` | Step 16 |
-| `make test-integration` | Storage adapter tests against throwaway Postgres and Valkey containers | Step 16 |
-| `make tf-validate` | Checks formatting and validates the AWS Terraform | Step 16 |
+| Command | What it does | Needs | Introduced in |
+|---|---|---|---|
+| `make env` | Creates `.env` with two traders, fresh API secrets and a database password | openssl | Step 3 |
+| `make run` | Runs the exchange locally with the log event sink | `.env`; port 8080 free | Step 3 |
+| `make run-pricefeed` | Runs the price feed locally with live public sources and in-memory history | Port 8090 free; internet, or `PRICEFEED_SOURCES=none` | Step 3 |
+| `make test` | Runs every test in the workspace | Nothing running | Step 2 |
+| `make ci` | Runs lint and tests, the same checks as the CI pipeline | Nothing running | Step 2 |
+| `make postman-env` | Writes the `Orderflow local` Postman environment from `.env` | `.env` with two traders | Step 4 |
+| `make flows` | Runs all nine scenario flows, after checking both services are ready | Exchange and price feed running (locally or `make up`); `make postman-env`; Node.js | Step 4 |
+| `make flows FLOW="06 Stop orders"` | Runs one flow | Only the service that flow calls | Step 4 |
+| `make flows-lint` | Validates the flows against the Postman collection schema | Node.js | Step 4 |
+| `make bench` | Benchmarks the matching engine | Nothing running | Step 7 |
+| `make up` | Builds and starts both services with Redpanda, Postgres, Valkey, Prometheus and Grafana | Docker; `PRICEFEED_DB_PASSWORD` in `.env`; local services stopped | Step 8 |
+| `make pricefeed-env` | Adds the price feed database password to an `.env` created before the price feed | An existing `.env` | Step 8 |
+| `make consume` | Prints events from the topic as they arrive | `make up` | Step 8 |
+| `make topics` | Shows the topic's partitions and how many records each holds | `make up` | Step 8 |
+| `make down` | Stops the stack and removes its volumes | | Step 8 |
+| `make monitoring-check` | Validates the Prometheus config, tests the alert rules, checks the dashboards | Docker | Step 11 |
+| `make lint` | Checks formatting and runs clippy with warnings as errors | Nothing running | Step 13 |
+| `make fmt` | Formats the code | | Step 13 |
+| `make prices` | Prints index prices with the TypeScript CLI; `MARKETS="BTC-USD ETH-USD"` streams them | Price feed running; Node.js | Step 14 |
+| `make sdk` | Builds and tests the TypeScript client and CLI | Node.js | Step 14 |
+| `make load-test` | WebSocket fanout load test; `CONNECTIONS`, `LOAD_SECONDS`, `LOAD_URL` | Price feed running | Step 16 |
+| `make test-integration` | Storage adapter tests against throwaway Postgres and Valkey containers | Docker | Step 16 |
+| `make tf-validate` | Checks formatting and validates the AWS Terraform | Terraform | Step 16 |
 
 Scripts outside the Makefile:
 
@@ -962,7 +1102,8 @@ Scripts outside the Makefile:
 |---|---|---|
 | `scripts/bootstrap-env.sh --add-trader` | Appends one more trader to an existing `.env` | Step 4 |
 | `scripts/signed-request.sh METHOD PATH [BODY]` | Sends one signed request; `ORDERFLOW_CREDENTIAL=2` signs as trader B | Step 3 |
-| `scripts/bootstrap-env.sh --add-pricefeed` | Adds the price feed database password to `.env` (what `make pricefeed-env` runs) | Step 16 |
+| `scripts/bootstrap-env.sh --add-pricefeed` | Adds the price feed database password to `.env` (what `make pricefeed-env` runs) | Step 8 |
+| `scripts/flows-preflight.sh ENV_FILE [FLOW]` | Checks that the services the flows call are ready and says how to start a missing one (what `make flows` runs first) | Step 4 |
 | `scripts/integration-test.sh` | Starts Postgres and Valkey on side ports, runs the ignored storage tests, removes them | Step 16 |
 
 ## Glossary
@@ -1015,8 +1156,8 @@ Scripts outside the Makefile:
 
 - [ ] Step 1: toolchain installed, repository cloned
 - [ ] Step 2: `make ci` passes
-- [ ] Step 3: first order placed, errors read
-- [ ] Step 4: every scenario flow passes
+- [ ] Step 3: both services running, first order placed, errors read
+- [ ] Step 4: all nine scenario flows pass (88 requests, 260 assertions)
 - [ ] Step 5: ADR 0001 read, `Clock` exercise done
 - [ ] Step 6: one order traced through all 13 rows
 - [ ] Step 7: engine test written
