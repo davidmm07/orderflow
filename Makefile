@@ -46,7 +46,8 @@ POSTMAN_CLI := npx --yes --package postman-cli@1 postman
 FLOWS := "postman/collections/Orderflow scenarios"
 FLOWS_ENV ?= postman/environments/orderflow-local.environment.yaml
 
-flows: ## Run the scenario flows with the Postman CLI; FLOW="06 Stop orders" runs one
+flows: ## Run the scenario flows (needs the exchange and the price feed running); FLOW="06 Stop orders" runs one
+	@./scripts/flows-preflight.sh "$(FLOWS_ENV)" "$(FLOW)"
 	$(POSTMAN_CLI) collection run $(FLOWS) -e "$(FLOWS_ENV)" $(if $(FLOW),-i "$(FLOW)")
 
 flows-lint: ## Validate the scenario flows against the Postman collection schema
