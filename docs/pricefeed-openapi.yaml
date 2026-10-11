@@ -12,7 +12,8 @@ info:
 
     Live prices are also streamed over WebSocket at `/v1/ws`. The protocol is
     described in the README (section "Market data: the price feed") and
-    implemented by the TypeScript client in clients/typescript.
+    implemented by the TypeScript client in clients/typescript, whose types
+    are generated from this file (`make sdk-types`).
 
     Responses carry `Cache-Control`: `public, max-age=1` for live data and
     `public, max-age=60` for candle windows that have closed, so browsers
@@ -49,13 +50,7 @@ paths:
             Cache-Control: { $ref: "#/components/headers/CacheControl" }
           content:
             application/json:
-              schema:
-                type: object
-                required: [prices]
-                properties:
-                  prices:
-                    type: array
-                    items: { $ref: "#/components/schemas/Price" }
+              schema: { $ref: "#/components/schemas/PricesResponse" }
         "404": { $ref: "#/components/responses/Problem" }
         "422": { $ref: "#/components/responses/Problem" }
 
@@ -92,7 +87,9 @@ paths:
         - $ref: "#/components/parameters/Market"
         - name: interval
           in: query
-          schema: { type: string, enum: ["1m", "5m", "15m", "1h", "4h", "1d"], default: "1m" }
+          schema:
+            allOf: [{ $ref: "#/components/schemas/CandleInterval" }]
+            default: "1m"
         - name: limit
           in: query
           description: Number of buckets in the window.
@@ -108,15 +105,7 @@ paths:
             Cache-Control: { $ref: "#/components/headers/CacheControl" }
           content:
             application/json:
-              schema:
-                type: object
-                required: [market, interval, candles]
-                properties:
-                  market: { type: string, example: "BTC-USD" }
-                  interval: { type: string, example: "5m" }
-                  candles:
-                    type: array
-                    items: { $ref: "#/components/schemas/Candle" }
+              schema: { $ref: "#/components/schemas/CandlesResponse" }
         "404": { $ref: "#/components/responses/Problem" }
         "422": { $ref: "#/components/responses/Problem" }
         "503": { $ref: "#/components/responses/Problem" }
@@ -131,13 +120,7 @@ paths:
           description: Sources sorted by id.
           content:
             application/json:
-              schema:
-                type: object
-                required: [sources]
-                properties:
-                  sources:
-                    type: array
-                    items: { $ref: "#/components/schemas/SourceSummary" }
+              schema: { $ref: "#/components/schemas/SourcesResponse" }
 
   /v1/ws:
     get:
@@ -150,6 +133,10 @@ paths:
         `(epoch, sequence)` order per market. A slow reader receives the
         newest price, never a backlog. The server pings every 20 seconds and
         closes with code 1001 when it shuts down.
+
+        OpenAPI has no syntax for WebSocket frames, so the messages are
+        described as schemas: the client sends `ClientMessage`, the server
+        sends `ServerMessage`. Both are JSON text frames.
       responses:
         "101":
           description: Switching to the WebSocket protocol.
@@ -221,19 +208,34 @@ components:
       pattern: "^-?[0-9]+(\\.[0-9]+)?$"
       example: "81650.5"
 
+    PriceStatus:
+      type: string
+      enum: [live, degraded, stale]
+      description: |
+        live: at least the market's quorum of fresh sources agree.
+        degraded: a price exists but fewer sources back it, or they disagree; fine to display, while automated consumers should wait for live.
+        stale: no fresh source is left; this is the last published price.
+
+    QuoteState:
+      type: string
+      enum: [used, outlier, stale, monitor]
+      description: What the index did with one source's quote.
+
+    SourceKind:
+      type: string
+      enum: [aggregator, cex, dex, venue]
+
+    CandleInterval:
+      type: string
+      enum: ["1m", "5m", "15m", "1h", "4h", "1d"]
+
     Price:
       type: object
       required: [market, price, status, as_of, published_at, epoch, sequence, sources_used, spread_bps]
       properties:
         market: { type: string, example: "BTC-USD" }
         price: { $ref: "#/components/schemas/Decimal" }
-        status:
-          type: string
-          enum: [live, degraded, stale]
-          description: |
-            live: at least the market's quorum of fresh sources agree.
-            degraded: a price exists but fewer sources back it, or they disagree; fine to display, while automated consumers should wait for live.
-            stale: no fresh source is left; this is the last published price.
+        status: { $ref: "#/components/schemas/PriceStatus" }
         as_of: { type: string, format: date-time, description: Time of the newest quote behind the price. }
         published_at: { type: string, format: date-time }
         epoch: { type: integer, description: "Run of the publisher: its start time in milliseconds." }
@@ -246,10 +248,10 @@ components:
       required: [source, kind, price, observed_at, state]
       properties:
         source: { type: string, example: "uniswap_v3:usdc_weth_500" }
-        kind: { type: string, enum: [aggregator, cex, dex, venue] }
+        kind: { $ref: "#/components/schemas/SourceKind" }
         price: { $ref: "#/components/schemas/Decimal" }
         observed_at: { type: string, format: date-time }
-        state: { type: string, enum: [used, outlier, stale, monitor] }
+        state: { $ref: "#/components/schemas/QuoteState" }
         deviation_bps:
           allOf: [{ $ref: "#/components/schemas/Decimal" }]
           description: Distance from the index price, negative below it.
@@ -279,12 +281,116 @@ components:
       required: [source, kind, markets, used_in, outlier_in, stale_in, last_observed_at]
       properties:
         source: { type: string }
-        kind: { type: string, enum: [aggregator, cex, dex, venue] }
+        kind: { $ref: "#/components/schemas/SourceKind" }
         markets: { type: array, items: { type: string } }
         used_in: { type: integer }
         outlier_in: { type: integer }
         stale_in: { type: integer }
         last_observed_at: { type: string, format: date-time }
+
+    PricesResponse:
+      type: object
+      required: [prices]
+      properties:
+        prices:
+          type: array
+          items: { $ref: "#/components/schemas/Price" }
+
+    CandlesResponse:
+      type: object
+      required: [market, interval, candles]
+      properties:
+        market: { type: string, example: "BTC-USD" }
+        interval: { $ref: "#/components/schemas/CandleInterval" }
+        candles:
+          type: array
+          items: { $ref: "#/components/schemas/Candle" }
+
+    SourcesResponse:
+      type: object
+      required: [sources]
+      properties:
+        sources:
+          type: array
+          items: { $ref: "#/components/schemas/SourceSummary" }
+
+    ClientMessage:
+      description: A WebSocket message sent by the client, told apart by `op`.
+      oneOf:
+        - $ref: "#/components/schemas/SubscriptionRequest"
+        - $ref: "#/components/schemas/PingRequest"
+
+    SubscriptionRequest:
+      type: object
+      additionalProperties: false
+      required: [op, markets]
+      properties:
+        op: { type: string, enum: [subscribe, unsubscribe] }
+        markets:
+          type: array
+          items: { type: string, example: "BTC-USD" }
+
+    PingRequest:
+      type: object
+      additionalProperties: false
+      required: [op]
+      properties:
+        op: { type: string, const: ping }
+
+    ServerMessage:
+      description: A WebSocket message sent by the server, told apart by `type`.
+      oneOf:
+        - $ref: "#/components/schemas/WelcomeMessage"
+        - $ref: "#/components/schemas/SubscribedMessage"
+        - $ref: "#/components/schemas/PriceMessage"
+        - $ref: "#/components/schemas/ErrorMessage"
+        - $ref: "#/components/schemas/PongMessage"
+
+    WelcomeMessage:
+      description: First message on every connection.
+      type: object
+      required: [type, markets, max_subscriptions, ping_interval_secs]
+      properties:
+        type: { type: string, const: welcome }
+        markets: { type: array, items: { type: string } }
+        max_subscriptions: { type: integer }
+        ping_interval_secs: { type: integer }
+
+    SubscribedMessage:
+      description: The connection's subscriptions after a subscribe or unsubscribe.
+      type: object
+      required: [type, markets]
+      properties:
+        type: { type: string, const: subscribed }
+        markets: { type: array, items: { type: string } }
+
+    PriceMessage:
+      description: An index price, with the fields of `Price` next to `type`.
+      allOf:
+        - $ref: "#/components/schemas/Price"
+        - type: object
+          required: [type]
+          properties:
+            type: { type: string, const: price }
+
+    ErrorMessage:
+      description: A rejected client message. The connection stays open.
+      type: object
+      required: [type, code, detail]
+      properties:
+        type: { type: string, const: error }
+        code: { type: string, example: unknown_market }
+        detail: { type: string }
+        markets:
+          type: array
+          items: { type: string }
+          description: The well formed market ids that are not listed, for `unknown_market`.
+
+    PongMessage:
+      type: object
+      required: [type]
+      properties:
+        type: { type: string, const: pong }
 
     FieldError:
       type: object
