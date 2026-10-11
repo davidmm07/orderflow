@@ -860,7 +860,8 @@ Pull request checklist:
 - [ ] `make ci` passes locally.
 - [ ] New behavior has tests in the lowest ring that can express it.
 - [ ] New errors have a stable `code`, an HTTP mapping and a row in `docs/errors.md`.
-- [ ] API changes are reflected in `docs/openapi.yaml`.
+- [ ] API changes are reflected in `docs/openapi.yaml`, or in
+      `docs/pricefeed-openapi.yaml` followed by `make sdk-types`.
 - [ ] The diff contains no secrets, `.env` files or key material.
 - [ ] Commits follow the convention above.
 
@@ -899,7 +900,9 @@ pools read straight from Solana. Each has a `state` (`used`, `outlier`,
 
 Watch prices live with the TypeScript CLI (needs Node.js 20 or later; the
 first run installs and builds it, and `make sdk` runs the client's own
-tests):
+tests). The client's types are generated from the API contract,
+`docs/pricefeed-openapi.yaml`; `make sdk-types` regenerates them after the
+contract changes:
 
 ```bash
 make prices MARKETS="BTC-USD ETH-USDC SOL-USDC"
@@ -1092,6 +1095,7 @@ it in context.
 | `make fmt` | Formats the code | | Step 13 |
 | `make prices` | Prints index prices with the TypeScript CLI; `MARKETS="BTC-USD ETH-USD"` streams them | Price feed running; Node.js | Step 14 |
 | `make sdk` | Builds and tests the TypeScript client and CLI | Node.js | Step 14 |
+| `make sdk-types` | Regenerates the SDK's types from `docs/pricefeed-openapi.yaml` | Node.js | Step 14 |
 | `make load-test` | WebSocket fanout load test; `CONNECTIONS`, `LOAD_SECONDS`, `LOAD_URL` | Price feed running | Step 16 |
 | `make test-integration` | Storage adapter tests against throwaway Postgres and Valkey containers | Docker | Step 16 |
 | `make tf-validate` | Checks formatting and validates the AWS Terraform | Terraform | Step 16 |
@@ -1148,7 +1152,7 @@ Scripts outside the Makefile:
 | Add an exchange connector | A `Source` in `crates/ingest/src/connectors/` (Kraken is the template), a fixture test, then a factory line in `crates/pricefeed/src/app.rs` |
 | Add a DEX pool | `config/marketdata.json`; step 15 has the checks |
 | Change the index rule | `crates/marketdata/src/aggregate.rs` and its property tests |
-| Change the WebSocket protocol | `crates/pricefeed/src/dto.rs` and `ws.rs`, then `clients/typescript/src/types.ts` and `stream.ts` |
+| Change the price feed API or its WebSocket protocol | `crates/pricefeed/src/dto.rs`, `http.rs` or `ws.rs`; then the contract in `docs/pricefeed-openapi.yaml`; then `make sdk-types`, which regenerates the SDK's types, and `clients/typescript/src/stream.ts` if the behavior changed |
 | Change the AWS setup | `deploy/terraform`, then `make tf-validate` |
 | Understand a past decision | `docs/adr/` |
 

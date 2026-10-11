@@ -743,7 +743,10 @@ overlap possible during failover cannot corrupt history.
 [`clients/typescript`](clients/typescript) is a typed client for the REST
 API and a reconnecting WebSocket stream: jittered backoff, resubscription,
 ordering by `(epoch, sequence)`, heartbeats, and an async iterator that
-conflates like the server does.
+conflates like the server does. Its wire types are generated from
+[`docs/pricefeed-openapi.yaml`](docs/pricefeed-openapi.yaml), WebSocket
+messages included, and CI fails when the committed types and the contract
+differ (`make sdk-types` regenerates them).
 
 ```ts
 import WebSocket from 'ws';
