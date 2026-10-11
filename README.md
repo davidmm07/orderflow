@@ -2,18 +2,25 @@
 
 [![ci](https://github.com/davidmm07/orderflow/actions/workflows/ci.yml/badge.svg)](https://github.com/davidmm07/orderflow/actions/workflows/ci.yml)
 
-Orderflow is a price-time priority matching engine with a trading API,
-written in Rust. It is a reference for the kind of service that sits at the
-core of an exchange, where correctness, security and operability matter
-more than feature count.
+Orderflow is a production-style crypto exchange backend in Rust, built as
+two services:
 
-Next to the exchange runs a market data service, the price feed: one index
-price per market, aggregated from exchange APIs, CoinGecko and in-house
-Ethereum and Solana indexers, streamed to clients over WebSocket and
-backed by Postgres with cache tiers for traffic spikes. See
-[Market data: the price feed](#market-data-the-price-feed).
+- **Exchange.** A deterministic price-time matching engine behind an
+  HMAC-signed REST API, with every state change published to Kafka.
+- **Price feed.** Live index prices that merge exchange APIs with its own
+  Ethereum and Solana indexers, streamed over WebSocket, with history in
+  Postgres behind Redis and in-process caches. See
+  [Market data: the price feed](#market-data-the-price-feed).
 
-If you are new to the codebase, follow [KT_README.MD](KT_README.MD) first.
+In local tests one price feed node served 20,000 WebSocket clients with no
+failures, and a standby took over from a killed ingest leader in about a
+second. The repository also holds a TypeScript SDK and CLI, Grafana
+dashboards and AWS Terraform.
+
+It is a reference for the kind of system that sits at the core of an
+exchange, where correctness, security and operability matter more than
+feature count. If you are new to the codebase, follow
+[KT_README.MD](KT_README.MD) first.
 
 ## Features
 
