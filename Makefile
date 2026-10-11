@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 .PHONY: help env run test lint fmt bench ci up down consume topics postman-env flows flows-lint monitoring-check \
-	run-pricefeed pricefeed-env test-integration load-test sdk prices tf-validate
+	run-pricefeed pricefeed-env test-integration load-test sdk sdk-types prices tf-validate
 
 help: ## List the available targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-17s %s\n", $$1, $$2}'
@@ -82,6 +82,9 @@ SDK := clients/typescript
 
 sdk: ## Build and test the TypeScript client and CLI
 	cd $(SDK) && npm ci --no-audit --no-fund && npm test
+
+sdk-types: ## Regenerate the SDK's types after changing docs/pricefeed-openapi.yaml
+	cd $(SDK) && npm run generate
 
 PRICES_URL ?= http://127.0.0.1:8090
 

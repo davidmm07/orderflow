@@ -11,3 +11,5 @@ export {
   streamUrl,
 } from './stream.js';
 export * from './types.js';
+/** The whole generated contract, for tools such as openapi-fetch. */
+export type { components, operations, paths } from './generated/pricefeed.js';

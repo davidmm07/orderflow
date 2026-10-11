@@ -1,0 +1,14 @@
+{
+  "name": "@orderflow/prices-typegen",
+  "version": "0.1.0",
+  "description": "Generates the SDK's wire types from docs/pricefeed-openapi.yaml.",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "generate": "openapi-typescript ../../../docs/pricefeed-openapi.yaml --output ../src/generated/pricefeed.ts"
+  },
+  "devDependencies": {
+    "openapi-typescript": "7.13.0",
+    "typescript": "5.9.3"
+  }
+}

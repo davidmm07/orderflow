@@ -13,6 +13,29 @@ Typed client for the Orderflow price feed, and the `orderflow-prices` CLI.
 Prices are decimal strings. Keep them as strings for anything that is
 compared or stored; `Number()` is for display only.
 
+## Types come from the API contract
+
+Every wire type (`Price`, `PriceDetail`, `Candle`, `ServerMessage` and the
+rest) is generated from
+[`docs/pricefeed-openapi.yaml`](../../docs/pricefeed-openapi.yaml) into
+`src/generated/pricefeed.ts`, and `src/types.ts` gives the schemas their
+public names. Nothing in `src/generated` is edited by hand. After changing
+the contract:
+
+```bash
+npm run generate
+```
+
+CI runs `npm run generate:check`, which regenerates the file and fails if
+it differs from the committed one, so the SDK cannot fall behind the
+contract unnoticed. The whole generated contract is also exported as
+`paths`, `operations` and `components` for tools such as openapi-fetch.
+
+The generator, `openapi-typescript`, needs the TypeScript 5 compiler API,
+while the SDK compiles with TypeScript 7. It therefore lives in its own
+small package, `typegen/`, with its own lockfile, and the SDK gains no
+dependency from it.
+
 ## Use
 
 ```bash

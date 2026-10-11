@@ -1,5 +1,14 @@
 import { PricefeedError } from './errors.js';
-import type { CandleInterval, CandlesResponse, Price, PriceDetail, Problem, SourceSummary } from './types.js';
+import type {
+  CandleInterval,
+  CandlesResponse,
+  Price,
+  PriceDetail,
+  PricesResponse,
+  Problem,
+  SourceSummary,
+  SourcesResponse,
+} from './types.js';
 
 export interface ClientOptions {
   /** Such as `http://127.0.0.1:8090`. */
@@ -34,7 +43,7 @@ export class PricesClient {
   /** Index prices of every market, or of `markets` only. */
   async prices(markets?: string[]): Promise<Price[]> {
     const query = markets && markets.length > 0 ? { markets: markets.join(',') } : undefined;
-    const body = await this.get<{ prices: Price[] }>('/v1/prices', query);
+    const body = await this.get<PricesResponse>('/v1/prices', query);
     return body.prices;
   }
 
@@ -54,7 +63,7 @@ export class PricesClient {
   }
 
   async sources(): Promise<SourceSummary[]> {
-    const body = await this.get<{ sources: SourceSummary[] }>('/v1/sources');
+    const body = await this.get<SourcesResponse>('/v1/sources');
     return body.sources;
   }
 

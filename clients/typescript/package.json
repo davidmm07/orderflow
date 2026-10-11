@@ -25,6 +25,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "generate": "npm --prefix typegen ci --no-audit --no-fund && npm --prefix typegen run generate",
+    "generate:check": "npm run generate && git diff --exit-code -- src/generated",
     "test": "npm run build && node --test dist/test/*.test.js",
     "prices": "node dist/cli.js"
   },
