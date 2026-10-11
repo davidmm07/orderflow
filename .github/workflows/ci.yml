@@ -102,6 +102,10 @@ jobs:
           cache: npm
           cache-dependency-path: clients/typescript/package-lock.json
       - run: npm ci --no-audit --no-fund
+      # The wire types are generated from docs/pricefeed-openapi.yaml and
+      # committed. Regenerating must change nothing; a difference means the
+      # contract was edited without `make sdk-types`.
+      - run: npm run generate:check
       - run: npm test
 
   terraform:
